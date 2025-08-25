@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed, Future
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from .auth import check_session_valid
+from .auth import check_session_valid, authenticated_get, set_global_session
 from config.api_config import ALPHAS_ENDPOINT, DEFAULT_ALPHA_FETCH_PARAMS, DEFAULT_REQUEST_LIMIT # Import new config
 
 logger = logging.getLogger(__name__)
@@ -82,8 +82,9 @@ def warm_up_api_connection(session):
     """
     try:
         # Make a simple request to establish connection
-        result = session.get(
+        result = authenticated_get(
             f"{brain_api_url}/authentication", 
+            session=session,
             headers=DEFAULT_API_HEADERS,
             timeout=5
         )
@@ -145,7 +146,7 @@ def _fetch_alpha_batch(session: requests.Session,
     while True: # Indefinite retry loop
         try:
             logger.debug(f"Requesting batch: URL: {actual_request_url}, Params: {log_params_display_for_batch}, Offset: {offset}, Limit: {limit}")
-            response = session.get(actual_request_url, params=current_params_for_get_call, timeout=request_timeout)
+            response = authenticated_get(actual_request_url, session=session, params=current_params_for_get_call, timeout=request_timeout)
             
             if response.status_code == 200:
                 try:
@@ -284,7 +285,7 @@ def scrape_alphas_by_region(session: requests.Session,
     total_alphas_count = 0
     try:
         logger.info(f"Fetching total alpha count. URL: {initial_request_target_url_for_count}, Params: {log_initial_params_display}")
-        response = session.get(initial_request_target_url_for_count, params=initial_params_for_count_call, timeout=request_timeout)
+        response = authenticated_get(initial_request_target_url_for_count, session=session, params=initial_params_for_count_call, timeout=request_timeout)
         response.raise_for_status() 
         data = response.json()
         total_alphas_count = data.get('count', 0)
@@ -398,8 +399,9 @@ def get_alpha_pnl(session: requests.Session, alpha_id: str) -> pd.DataFrame:
             logger.debug(f"Fetching PNL for alpha {alpha_id}, Attempt {attempt + 1}/{max_retries}")
             
             # Use proper headers for API request with increased timeout for potentially slow responses
-            result = session.get(
+            result = authenticated_get(
                 f"{brain_api_url}/alphas/{alpha_id}/recordsets/pnl", 
+                session=session,
                 headers=DEFAULT_API_HEADERS,
                 timeout=(10, 30)  # (connect timeout, read timeout)
             )

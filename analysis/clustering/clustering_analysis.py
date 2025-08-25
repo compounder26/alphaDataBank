@@ -18,6 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 # Import database functionality
 from database.operations import (
     get_all_alpha_ids_by_region_basic,
+    get_regular_alpha_ids_by_region,
     get_pnl_data_for_alphas,
     get_correlation_statistics
 )
@@ -322,7 +323,7 @@ def generate_clustering_data(region: str) -> Dict[str, Any]:
     try:
         # Get all alpha IDs for the region
         print(f"Getting alpha IDs for region {region}...")
-        alpha_ids = get_all_alpha_ids_by_region_basic(region)
+        alpha_ids = get_regular_alpha_ids_by_region(region)
         
         if not alpha_ids:
             print(f"No alphas found for region {region}")

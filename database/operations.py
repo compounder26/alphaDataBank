@@ -457,6 +457,30 @@ def get_all_alpha_ids_by_region_basic(region: str) -> List[str]:
         logger.error(f"Error getting alpha IDs for region {region}: {e}")
         raise
 
+def get_regular_alpha_ids_by_region(region: str) -> List[str]:
+    """
+    Get only REGULAR alpha IDs for a specific region (excludes SUPER alphas).
+    Used for clustering analysis where we only want REGULAR alphas.
+    
+    Args:
+        region: Region name
+    
+    Returns:
+        List of REGULAR alpha IDs only
+    """
+    try:
+        db_engine = get_connection()
+        with db_engine.connect() as connection:
+            region_id = get_region_id(connection, region) # Pass SQLAlchemy connection
+            stmt = text("SELECT alpha_id FROM alphas WHERE region_id = :region_id AND alpha_type = 'REGULAR'")
+            result = connection.execute(stmt, {"region_id": region_id})
+            alpha_ids = [row[0] for row in result.fetchall()]
+            logger.info(f"Found {len(alpha_ids)} REGULAR alphas for clustering in region {region}")
+            return alpha_ids
+    except Exception as e:
+        logger.error(f"Error getting REGULAR alpha IDs for region {region}: {e}")
+        raise
+
 def get_alpha_ids_for_pnl_processing(region: str) -> List[str]:
     """
     Get REGULAR and SUPER alpha IDs for a specific region that do not have PNL data yet.

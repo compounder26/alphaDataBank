@@ -274,11 +274,74 @@ def initialize_database() -> None:
     init_schema()
     logger.info("Database initialization complete")
 
+def init_analysis_schema() -> None:
+    """Initialize the database schema for alpha expression analysis."""
+    try:
+        connection_params_main_db = {
+            'user': DB_USER,
+            'password': DB_PASSWORD,
+            'host': DB_HOST,
+            'port': DB_PORT,
+            'database': DB_NAME
+        }
+        with psycopg2.connect(**connection_params_main_db) as conn:
+            conn.autocommit = True
+            with conn.cursor() as cursor:
+                # Create alpha analysis cache table
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alpha_analysis_cache (
+                    cache_id SERIAL PRIMARY KEY,
+                    alpha_id VARCHAR(50) REFERENCES alphas(alpha_id) ON DELETE CASCADE,
+                    operators_unique JSONB,
+                    operators_nominal JSONB,
+                    datafields_unique JSONB,
+                    datafields_nominal JSONB,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(alpha_id)
+                )
+                """)
+                
+                # Create analysis summary table for aggregated results
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS analysis_summary (
+                    summary_id SERIAL PRIMARY KEY,
+                    region_id INTEGER REFERENCES regions(region_id),
+                    universe VARCHAR(50),
+                    delay INTEGER,
+                    alpha_type VARCHAR(15),
+                    analysis_type VARCHAR(20), -- 'operators' or 'datafields'
+                    item_name VARCHAR(200),
+                    item_category VARCHAR(100),
+                    unique_count INTEGER,
+                    nominal_count INTEGER,
+                    alpha_ids JSONB,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """)
+                
+                # Create indices for performance
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_alpha_analysis_cache_alpha_id ON alpha_analysis_cache (alpha_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_summary_region ON analysis_summary (region_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_summary_type ON analysis_summary (analysis_type)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_summary_item ON analysis_summary (item_name)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_summary_filters ON analysis_summary (region_id, universe, delay, alpha_type)")
+                
+                logger.info("Alpha analysis database schema initialized successfully")
+    except psycopg2.Error as e:
+        logger.error(f"Error initializing analysis schema: {e}")
+        raise
+
 def initialize_unsubmitted_database() -> None:
     """Main function to initialize the unsubmitted alphas database."""
     create_database()  # Ensure main database exists
     init_unsubmitted_schema()
     logger.info("Unsubmitted alphas database initialization complete")
+
+def initialize_analysis_database() -> None:
+    """Main function to initialize the alpha analysis database."""
+    create_database()  # Ensure main database exists
+    init_analysis_schema()
+    logger.info("Alpha analysis database initialization complete")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

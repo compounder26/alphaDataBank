@@ -9,6 +9,12 @@ secrets/
 *.pem
 *.p12
 *.pfx
+.env
+.env.*
+*credential*
+*secret*
+platform-brain.json
+session_cookies.json
 
 # Python Cache
 __pycache__/

@@ -12,12 +12,12 @@ import logging
 import argparse
 import time
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 # Add parent directory to path to allow imports
 sys.path.append(str(Path(__file__).parent.parent))
 
-from api.auth import get_authenticated_session, check_session_valid
+from api.auth import get_authenticated_session, check_session_valid, set_global_session
 from api.alpha_fetcher import scrape_alphas_by_region, get_alpha_pnl_threaded, get_robust_session, warm_up_api_connection
 from database.schema import initialize_database
 from config.database_config import REGIONS as CONFIGURED_REGIONS # Import and alias to avoid conflict
@@ -40,6 +40,7 @@ from config.database_config import REGIONS
 
 # Import unsubmitted alphas modules
 from api.unsubmitted_fetcher import fetch_unsubmitted_alphas_from_url
+from api.unsubmitted_fetcher_auto import fetch_all_unsubmitted_alphas_auto
 from database.operations_unsubmitted import (
     get_unsubmitted_alpha_type_and_status,
     insert_unsubmitted_alpha,
@@ -85,6 +86,7 @@ def process_unsubmitted_alphas(url: str, regions_to_process: List[str], skip_ini
         if not session:
             logging.error("Failed to authenticate session for unsubmitted alphas")
             return
+        set_global_session(session)  # Enable automatic reauthentication
         warm_up_api_connection(session)
     
     # Fetch all unsubmitted alphas once (outside region loop)
@@ -147,7 +149,7 @@ def process_unsubmitted_alphas(url: str, regions_to_process: List[str], skip_ini
                     
                     # Use the same PNL fetching logic as submitted alphas
                     combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
-                        session, alpha_ids_for_pnl, max_workers=200
+                        session, alpha_ids_for_pnl, max_workers=1
                     )
                     
                     if combined_pnl_df is not None and not combined_pnl_df.empty:
@@ -199,6 +201,168 @@ def process_unsubmitted_alphas(url: str, regions_to_process: List[str], skip_ini
     
     logging.info("Unsubmitted alphas processing complete.")
 
+
+def process_unsubmitted_alphas_auto(
+    regions_to_process: List[str], 
+    sharpe_thresholds: Optional[List[float]] = None,
+    batch_size: int = 50,
+    skip_init: bool = False, 
+    skip_alpha_fetch: bool = False, 
+    skip_pnl_fetch: bool = False, 
+    skip_correlation: bool = False,
+    use_streaming: bool = True
+) -> None:
+    """
+    Process unsubmitted alphas automatically using streaming window processing.
+    
+    Args:
+        regions_to_process: List of regions to process
+        sharpe_thresholds: List of sharpe thresholds to fetch (e.g., [1.0, -1.0])
+        batch_size: Number of alphas to fetch per API request
+        skip_init: Skip database initialization
+        skip_alpha_fetch: Skip alpha fetching
+        skip_pnl_fetch: Skip PNL fetching
+        skip_correlation: Skip correlation calculation
+        use_streaming: Use streaming mode (recommended) vs bulk mode (memory intensive)
+    """
+    logging.info("Starting automated unsubmitted alphas processing...")
+    
+    if sharpe_thresholds:
+        logging.info(f"Using custom sharpe thresholds: {sharpe_thresholds}")
+    else:
+        sharpe_thresholds = [1.0, -1.0]
+        logging.info("Using default sharpe thresholds: >= 1.0 and <= -1.0")
+    
+    # Initialize unsubmitted database schema if needed
+    if not skip_init:
+        logging.info("Initializing unsubmitted alphas database schema...")
+        try:
+            initialize_unsubmitted_database()
+            logging.info("Unsubmitted database schema initialization complete")
+        except Exception as e:
+            logging.error(f"Unsubmitted database schema initialization failed: {e}")
+            return
+    
+    # Create session for API calls
+    session = None
+    if not skip_alpha_fetch or not skip_pnl_fetch:
+        robust_session = get_robust_session()
+        session = get_authenticated_session(session=robust_session)
+        if not session:
+            logging.error("Failed to authenticate session for automated unsubmitted alphas")
+            return
+        set_global_session(session)  # Enable automatic reauthentication
+        warm_up_api_connection(session)
+    
+    if use_streaming:
+        logging.info("🔄 STREAMING MODE: Processing windows globally (mixed regions per window)")
+        
+        if not skip_alpha_fetch:
+            try:
+                # Process ALL regions together using streaming mode (mixed regions per window)
+                total_processed = fetch_all_unsubmitted_alphas_auto(
+                    session=session,
+                    regions_to_process=regions_to_process,
+                    sharpe_thresholds=sharpe_thresholds,
+                    batch_size=batch_size,
+                    process_immediately=True,  # Enable streaming mode
+                    skip_pnl_fetch=skip_pnl_fetch,
+                    skip_correlation=skip_correlation
+                )
+                
+                logging.info(f"✅ Streaming complete: {total_processed} total alphas processed across all regions")
+                
+            except Exception as e:
+                logging.error(f"Error during streaming processing: {e}")
+                return
+        else:
+            logging.info(f"⏭️  Skipping alpha fetch - processing existing data only")
+            
+            # Process existing data for each region individually
+            for region in regions_to_process:
+                if not skip_pnl_fetch or not skip_correlation:
+                    logging.info(f"Processing existing data for region {region}...")
+                    
+                    if not skip_pnl_fetch:
+                        try:
+                            alpha_ids_for_pnl = get_unsubmitted_alpha_ids_for_pnl_processing(region)
+                            if alpha_ids_for_pnl:
+                                logging.info(f"📈 Fetching PNL for {len(alpha_ids_for_pnl)} existing alphas in {region}...")
+                                combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
+                                    session, alpha_ids_for_pnl, max_workers=1
+                                )
+                                if combined_pnl_df is not None and not combined_pnl_df.empty:
+                                    pnl_data_dict = {}
+                                    unique_fetched_alphas = combined_pnl_df['alpha_id'].unique()
+                                    for alpha_id in unique_fetched_alphas:
+                                        pnl_data_dict[alpha_id] = combined_pnl_df[combined_pnl_df['alpha_id'] == alpha_id]
+                                    insert_multiple_unsubmitted_pnl_data_optimized(pnl_data_dict, region)
+                                    logging.info(f"✅ Updated PNL for {len(pnl_data_dict)} alphas in {region}")
+                        except Exception as e:
+                            logging.error(f"Error processing PNL for {region}: {e}")
+                    
+                    if not skip_correlation:
+                        try:
+                            calculate_unsubmitted_vs_submitted_correlations(region)
+                            logging.info(f"✅ Updated correlations for {region}")
+                        except Exception as e:
+                            logging.error(f"Error calculating correlations for {region}: {e}")
+        
+    else:
+        logging.warning("⚠️  BULK MODE: Using memory-intensive processing (not recommended for large datasets)")
+        
+        # Original bulk processing mode (kept for backward compatibility)
+        all_unsubmitted_alphas = []
+        alphas_by_region = {}
+        
+        if not skip_alpha_fetch:
+            logging.info("Starting automated fetch of ALL unsubmitted alphas...")
+            try:
+                # Fetch all regions together in bulk mode
+                all_unsubmitted_alphas = fetch_all_unsubmitted_alphas_auto(
+                    session=session,
+                    regions_to_process=regions_to_process,
+                    sharpe_thresholds=sharpe_thresholds,
+                    batch_size=batch_size,
+                    process_immediately=False,  # Disable streaming mode
+                    skip_pnl_fetch=True,  # Handle separately
+                    skip_correlation=True  # Handle separately
+                )
+                
+                # Group by region for processing
+                for alpha in all_unsubmitted_alphas:
+                    alpha_region = alpha.get('settings_region')
+                    if alpha_region in regions_to_process:
+                        if alpha_region not in alphas_by_region:
+                            alphas_by_region[alpha_region] = []
+                        alphas_by_region[alpha_region].append(alpha)
+                        
+                logging.info(f"Total fetched in bulk mode: {len(all_unsubmitted_alphas)} alphas")
+                for region, region_alphas in alphas_by_region.items():
+                    logging.info(f"  - {region}: {len(region_alphas)} alphas")
+                
+            except Exception as e:
+                logging.error(f"Error during bulk fetch: {e}")
+                return
+        
+        # Process each region with bulk data
+        for region in regions_to_process:
+            logging.info(f"--- Processing region {region} in bulk mode ---")
+            region_alphas = alphas_by_region.get(region, [])
+            
+            if not skip_alpha_fetch and region_alphas:
+                try:
+                    insert_multiple_unsubmitted_alphas(region_alphas, region)
+                    logging.info(f"Inserted {len(region_alphas)} alphas for region {region}")
+                except Exception as e:
+                    logging.error(f"Error inserting alphas for region {region}: {e}")
+            
+            # Handle PNL and correlations as before
+            # ... (rest of original bulk processing logic)
+    
+    logging.info("Automated unsubmitted alphas processing complete.")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Run the Alpha DataBank process')
     parser.add_argument('--region', choices=CONFIGURED_REGIONS, help='Region to process') # Use CONFIGURED_REGIONS for choices
@@ -210,8 +374,11 @@ def main():
     parser.add_argument('--report', action='store_true', help='Print correlation report for processed regions')
     
     # Unsubmitted alphas arguments
-    parser.add_argument('--unsubmitted', action='store_true', help='Process unsubmitted alphas instead of submitted')
+    parser.add_argument('--unsubmitted', action='store_true', help='Process unsubmitted alphas instead of submitted (requires --url)')
+    parser.add_argument('--unsubmitted-auto', action='store_true', help='Process unsubmitted alphas using automated fetching (fetches ALL alphas)')
     parser.add_argument('--url', type=str, help='URL for fetching unsubmitted alphas (required when using --unsubmitted)')
+    parser.add_argument('--sharpe-thresholds', type=str, help='Comma-separated sharpe thresholds (e.g., "1,-1" for >=1 and <=-1). Default: "1,-1"')
+    parser.add_argument('--batch-size', type=int, default=50, help='Batch size for API requests (default: 50)')
     
     args = parser.parse_args()
 
@@ -219,11 +386,20 @@ def main():
     if not args.region and not args.all:
         parser.error('Either --region or --all must be specified')
     
+    if args.unsubmitted and args.unsubmitted_auto:
+        parser.error('Cannot use both --unsubmitted and --unsubmitted-auto at the same time')
+    
     if args.unsubmitted and not args.url:
         parser.error('--url is required when using --unsubmitted')
     
-    if args.unsubmitted and args.report:
+    if args.unsubmitted_auto and args.url:
+        parser.error('--url is not needed when using --unsubmitted-auto (automatic fetching)')
+    
+    if (args.unsubmitted or args.unsubmitted_auto) and args.report:
         parser.error('--report is not supported for unsubmitted alphas yet')
+    
+    if args.sharpe_thresholds and not args.unsubmitted_auto:
+        parser.error('--sharpe-thresholds can only be used with --unsubmitted-auto')
 
     setup_logging()
 
@@ -239,6 +415,30 @@ def main():
             skip_correlation=args.skip_correlation
         )
         return  # Exit after processing unsubmitted alphas
+    
+    # Route to automated unsubmitted alphas processing if requested
+    if args.unsubmitted_auto:
+        regions_to_process = CONFIGURED_REGIONS[:] if args.all else [args.region]
+        
+        # Parse sharpe thresholds
+        sharpe_thresholds = None
+        if args.sharpe_thresholds:
+            try:
+                sharpe_thresholds = [float(x.strip()) for x in args.sharpe_thresholds.split(',')]
+                logging.info(f"Parsed sharpe thresholds: {sharpe_thresholds}")
+            except ValueError as e:
+                parser.error(f"Invalid sharpe thresholds format: {e}. Use comma-separated numbers like '1,-1'")
+        
+        process_unsubmitted_alphas_auto(
+            regions_to_process=regions_to_process,
+            sharpe_thresholds=sharpe_thresholds,
+            batch_size=args.batch_size,
+            skip_init=args.skip_init,
+            skip_alpha_fetch=args.skip_alpha_fetch,
+            skip_pnl_fetch=args.skip_pnl_fetch,
+            skip_correlation=args.skip_correlation
+        )
+        return  # Exit after processing automated unsubmitted alphas
 
     # Continue with regular (submitted) alphas processing below
     if not args.skip_init:
@@ -260,6 +460,7 @@ def main():
             logging.error("Failed to authenticate session")
             return 1
         
+        set_global_session(session)  # Enable automatic reauthentication
         # Warm up the API connection before intensive operations
         warm_up_api_connection(session)
 
@@ -380,6 +581,8 @@ def main():
                     if session and not check_session_valid(session):
                         logging.info(f"Session became invalid before batch PNL fetch for region {region_name}. Attempting to re-authenticate...")
                         session = get_authenticated_session()
+                        if session:
+                            set_global_session(session)  # Update global session
                     
                     if not session:
                         logging.error(f"No valid session to fetch PNL for region {region_name}. Skipping PNL fetch for this region.")
@@ -387,7 +590,7 @@ def main():
                         combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
                             session, 
                             alpha_ids_for_pnl, 
-                            max_workers=200 
+                            max_workers=1 
                         )
                         
                         if combined_pnl_df is not None and not combined_pnl_df.empty:

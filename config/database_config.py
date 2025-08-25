@@ -13,10 +13,14 @@ load_dotenv()
 
 # PostgreSQL connection details
 DB_USER = os.getenv("DB_USER", "postgres") # Default to 'postgres' if not set
-DB_PASSWORD = os.getenv("DB_PASSWORD", "tertius123") # Default to your current password if not set in .env
+DB_PASSWORD = os.getenv("DB_PASSWORD")  # REQUIRED: Set in .env file for security
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 DB_NAME = os.getenv("DB_NAME", "alpha_database") # Default to your current DB name
+
+# Validate required environment variables
+if not DB_PASSWORD:
+    raise ValueError("DB_PASSWORD environment variable must be set in .env file")
 
 # Construct DATABASE_URL for SQLAlchemy
 DATABASE_URL = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"

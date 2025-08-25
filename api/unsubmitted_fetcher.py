@@ -8,7 +8,8 @@ import json
 import logging
 from urllib.parse import urlparse, parse_qs
 from typing import List, Dict, Any, Optional
-from .auth import check_session_valid
+from concurrent.futures import ThreadPoolExecutor, as_completed, Future
+from .auth import check_session_valid, authenticated_get
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ def fetch_unsubmitted_alphas_from_url(session: requests.Session, url: str) -> Li
         # Make the request using the base URL and extracted parameters
         base_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
         
-        response = session.get(base_url, params=clean_params, timeout=30)
+        response = authenticated_get(base_url, session=session, params=clean_params, timeout=30)
         response.raise_for_status()
         
         data = response.json()
@@ -66,34 +67,48 @@ def fetch_unsubmitted_alphas_from_url(session: requests.Session, url: str) -> Li
         limit = int(clean_params.get('limit', 50))
         offset = int(clean_params.get('offset', 0))
         
-        # If there are more records, fetch them in batches
+        # If there are more records, fetch them in parallel batches
         if total_count > offset + limit:
-            logger.info(f"Fetching remaining {total_count - (offset + limit)} unsubmitted alphas in batches...")
+            logger.info(f"Fetching remaining {total_count - (offset + limit)} unsubmitted alphas using parallel requests...")
             
-            current_offset = offset + limit
-            while current_offset < total_count:
-                batch_params = clean_params.copy()
-                batch_params['offset'] = str(current_offset)
-                
-                try:
-                    batch_response = session.get(base_url, params=batch_params, timeout=30)
-                    batch_response.raise_for_status()
-                    batch_data = batch_response.json()
-                    batch_results = batch_data.get('results', [])
+            # Calculate all offsets needed
+            remaining_offsets = list(range(offset + limit, total_count, limit))
+            logger.info(f"Preparing {len(remaining_offsets)} batch requests with parallel processing")
+            
+            # Fetch remaining batches in parallel
+            try:
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    # Submit all batch requests
+                    futures: List[Future] = []
+                    for batch_offset in remaining_offsets:
+                        future = executor.submit(_fetch_single_batch, session, base_url, clean_params, batch_offset, limit)
+                        futures.append(future)
                     
-                    logger.info(f"Fetched batch at offset {current_offset}: {len(batch_results)} alphas")
-                    
-                    for alpha_data_item in batch_results:
-                        processed_record = process_unsubmitted_alpha_record(alpha_data_item)
-                        if processed_record:
-                            all_alphas.append(processed_record)
-                    
-                    current_offset += limit
-                    time.sleep(0.5)  # Small delay between requests
-                    
-                except Exception as e:
-                    logger.error(f"Error fetching batch at offset {current_offset}: {e}")
-                    break
+                    # Collect results as they complete
+                    for future in as_completed(futures):
+                        try:
+                            batch_alphas = future.result()
+                            if batch_alphas:
+                                all_alphas.extend(batch_alphas)
+                        except Exception as e:
+                            logger.error(f"Error processing parallel batch result: {e}")
+                            
+            except KeyboardInterrupt:
+                logger.info("Keyboard interrupt received during parallel fetching")
+            except Exception as e:
+                logger.error(f"Error during parallel batch processing: {e}")
+                # Fallback to sequential processing if parallel fails
+                logger.info("Falling back to sequential processing...")
+                current_offset = offset + limit
+                while current_offset < total_count:
+                    try:
+                        batch_alphas = _fetch_single_batch(session, base_url, clean_params, current_offset, limit)
+                        if batch_alphas:
+                            all_alphas.extend(batch_alphas)
+                        current_offset += limit
+                    except Exception as e:
+                        logger.error(f"Error in fallback sequential fetch at offset {current_offset}: {e}")
+                        break
         
         logger.info(f"Successfully fetched {len(all_alphas)} unsubmitted alphas total")
         return all_alphas
@@ -107,6 +122,45 @@ def fetch_unsubmitted_alphas_from_url(session: requests.Session, url: str) -> Li
     except Exception as e:
         logger.error(f"Unexpected error fetching unsubmitted alphas from URL {url}: {e}")
         return []
+
+def _fetch_single_batch(session: requests.Session, base_url: str, clean_params: dict, offset: int, limit: int) -> List[Dict[str, Any]]:
+    """
+    Fetch a single batch of unsubmitted alphas.
+    Designed to be called in parallel by ThreadPoolExecutor.
+    
+    Args:
+        session: Requests session
+        base_url: Base URL for the API
+        clean_params: Clean parameters dictionary
+        offset: Offset for this batch
+        limit: Limit for this batch
+        
+    Returns:
+        List of processed alpha records
+    """
+    batch_params = clean_params.copy()
+    batch_params['offset'] = str(offset)
+    
+    try:
+        batch_response = authenticated_get(base_url, session=session, params=batch_params, timeout=30)
+        batch_response.raise_for_status()
+        batch_data = batch_response.json()
+        batch_results = batch_data.get('results', [])
+        
+        logger.debug(f"Fetched batch at offset {offset}: {len(batch_results)} alphas")
+        
+        processed_alphas = []
+        for alpha_data_item in batch_results:
+            processed_record = process_unsubmitted_alpha_record(alpha_data_item)
+            if processed_record:
+                processed_alphas.append(processed_record)
+        
+        return processed_alphas
+        
+    except Exception as e:
+        logger.error(f"Error fetching batch at offset {offset}: {e}")
+        return []
+
 
 def process_unsubmitted_alpha_record(alpha_data_item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
