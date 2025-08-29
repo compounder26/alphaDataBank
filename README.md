@@ -5,9 +5,31 @@ A PostgreSQL-based system for tracking and analyzing WorldQuant Brain alpha trad
 ## Setup
 
 ### 1. Install Requirements
-```bash
+1. Install Requirements with a Virtual Environment
+
+It's a must to create a virtual environment (venv) to be able to run this code base, because some scripts of this repo get its depedency from the venv dir (if you don't create venv it won't run properly!).
+
+    Create the virtual environment:
+    Bash
+
+python -m venv venv
+
+Activate the virtual environment:
+
+    On Windows:
+    Bash
+
+venv\Scripts\activate
+
+On macOS/Linux:
+Bash
+
+    source venv/bin/activate
+
+Install the required packages:
+Bash
+
 pip install -r requirements.txt
-```
 
 ### 2. PostgreSQL Setup
 - Install PostgreSQL
