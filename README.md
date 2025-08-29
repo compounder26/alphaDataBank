@@ -39,6 +39,7 @@ DB_NAME=name_here
 ```bash
 python scripts/run_alpha_databank.py --all
 ```
+p.s : Right now you might need to run this script twice, there is a minor bug where on the first try after you authenticate it showed failed but the session cookies is actually stored and it will run successfully on the second try.
 
 ### Run Analytics Dashboard
 ```bash
