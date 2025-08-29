@@ -10,14 +10,14 @@
             ]
         ],
         "depends": [
-            "C:\\Users\\Tertius\\brain\\main\\alphaDataBank\\venv\\lib\\site-packages\\numpy\\core\\include\\numpy\\arrayobject.h",
-            "C:\\Users\\Tertius\\brain\\main\\alphaDataBank\\venv\\lib\\site-packages\\numpy\\core\\include\\numpy\\arrayscalars.h",
-            "C:\\Users\\Tertius\\brain\\main\\alphaDataBank\\venv\\lib\\site-packages\\numpy\\core\\include\\numpy\\ndarrayobject.h",
-            "C:\\Users\\Tertius\\brain\\main\\alphaDataBank\\venv\\lib\\site-packages\\numpy\\core\\include\\numpy\\ndarraytypes.h",
-            "C:\\Users\\Tertius\\brain\\main\\alphaDataBank\\venv\\lib\\site-packages\\numpy\\core\\include\\numpy\\ufuncobject.h"
+            "venv/lib/site-packages/numpy/core/include/numpy/arrayobject.h",
+            "venv/lib/site-packages/numpy/core/include/numpy/arrayscalars.h",
+            "venv/lib/site-packages/numpy/core/include/numpy/ndarrayobject.h",
+            "venv/lib/site-packages/numpy/core/include/numpy/ndarraytypes.h",
+            "venv/lib/site-packages/numpy/core/include/numpy/ufuncobject.h"
         ],
         "include_dirs": [
-            "C:\\Users\\Tertius\\brain\\main\\alphaDataBank\\venv\\lib\\site-packages\\numpy\\core\\include"
+            "venv/lib/site-packages/numpy/core/include"
         ],
         "name": "correlation_utils",
         "sources": [
@@ -12786,3 +12786,4 @@ static int __Pyx_State_RemoveModule(CYTHON_UNUSED void* dummy) {
 
 /* #### Code section: end ### */
 #endif /* Py_PYTHON_H */
+
