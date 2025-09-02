@@ -327,7 +327,7 @@ def calculate_and_store_correlations_optimized(region: str) -> None:
         start_calc_time = time.time()
 
         if total_alphas < 5 or max_workers == 1: # Small dataset or no parallelism benefit
-            logger.info("Processing correlations sequentially due to small dataset or max_workers=1.")
+            logger.info("Processing correlations sequentially due to small dataset or max_workers=10.")
             for single_task_args in task_args:
                 primary_id, stats = process_single_alpha_correlations(single_task_args)
                 if stats is not None:

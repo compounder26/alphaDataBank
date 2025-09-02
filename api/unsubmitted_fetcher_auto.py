@@ -256,7 +256,7 @@ def _process_threshold_streaming(
                         
                         # Use existing parallel PNL fetching
                         combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
-                            session, alpha_ids_for_pnl, max_workers=1
+                            session, alpha_ids_for_pnl, max_workers=10
                         )
                         
                         if combined_pnl_df is not None and not combined_pnl_df.empty:
