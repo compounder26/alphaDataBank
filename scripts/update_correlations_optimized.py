@@ -96,9 +96,8 @@ else:
     # Use the Cython implementation if available
     calculate_alpha_correlation_fast = correlation_utils.calculate_alpha_correlation_fast
 
-from sqlalchemy import text, create_engine, Connection  
+from sqlalchemy import text, create_engine, Connection
 from sqlalchemy.orm import sessionmaker
-from correlation_utils import calculate_alpha_correlation_fast
 from typing import List, Dict, Tuple
 
 # Assuming get_connection is defined elsewhere and accessible, e.g., from database.operations

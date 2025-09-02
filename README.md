@@ -32,34 +32,71 @@ Install the required packages:
 pip install -r requirements.txt
 ```
 
-### 2. PostgreSQL Setup
+### 2. Compile Cython Module (Optional, for Performance)
 
-- Install PostgreSQL
-- Run pgAdmin
-- Create your database
+This project uses a Cython extension (`correlation_utils.pyx`) to significantly speed up correlation calculations. To get this performance boost, you need to compile it. If you skip this step, the code will automatically use a slower pure Python version.
 
-### 3. Configuration Files
+**A. Install a C++ Compiler**
 
-Create `secrets/` directory with:
+You only need to do this once on your system.
 
-**secrets/platform-brain.json**
+*   **On Windows:**
+    1.  Download the **Visual Studio Build Tools** from the [official Microsoft site](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
+    2.  Run the installer. In the "Workloads" tab, check the box for **"Desktop development with C++"** and click "Install".
+
+*   **On macOS:**
+    Open the Terminal and run:
+    ```bash
+    xcode-select --install
+    ```
+
+*   **On Linux (Debian/Ubuntu):**
+    Open the Terminal and run:
+    ```bash
+    sudo apt update && sudo apt install build-essential
+    ```
+
+**B. Compile the Module**
+
+Once you have a compiler, run the following command in the project's root directory (with your virtual environment activated):
+```bash
+python setup.py build_ext --inplace
+```
+
+### 3. PostgreSQL Setup
+
+- Install PostgreSQL.
+- Open pgAdmin and create a new, empty database for this project.
+
+### 4. Configure Environment Variables
+
+Create a `.env` file in the root of the project directory. This file will store your database credentials. Copy the following structure into it, replacing the placeholder values with your actual database details:
+
+```env
+DB_PASSWORD=your_db_password
+DB_USER=your_db_user
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=your_db_name
+```
+
+Create a `secrets/` directory in the project root. Inside this directory, create a file named `platform-brain.json` with your WorldQuant Brain credentials:
+
 ```json
 {
-    "email": "email_here", 
-    "password": "password_here"
+    "email": "your_email@example.com",
+    "password": "your_brain_password"
 }
 ```
 
-**.env**
+### 5. Initialize the Database
 
-In the root folder create .env file with below structure:
-```env
-DB_PASSWORD=db_password
-DB_USER=user_here
-DB_HOST=localhost
-DB_PORT=port_here
-DB_NAME=name_here
+Once your configuration is set, you need to create the database tables. Run the following script from the project root:
+
+```bash
+python scripts/init_database.py
 ```
+
 
 ## Usage
 

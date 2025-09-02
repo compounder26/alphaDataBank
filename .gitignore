@@ -54,3 +54,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Analysis output
+analysis/clustering/*.json
