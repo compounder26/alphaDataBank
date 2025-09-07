@@ -100,9 +100,6 @@ python setup.py build_ext --inplace
        "password": "your_brain_password"
    }
    ```
-
-**Note:** The `secrets/` directory and `.env` file are gitignored for security. Never commit these files containing actual credentials.
-
 ### 5. Initialize the Database
 
 Once your configuration is set, you need to create the database tables. Run the following script from the project root:
