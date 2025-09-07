@@ -12,6 +12,7 @@ Cython
 # Dependencies for analysis and visualization
 scikit-learn  # Use latest version - 'force_all_finite' warning is sklearn's internal issue
 umap-learn
+hdbscan==0.8.33
 dash
 dash-bootstrap-components
 plotly

@@ -15,11 +15,16 @@ import scipy.cluster.hierarchy as sch
 from scipy.spatial.distance import squareform
 from sklearn.covariance import LedoitWolf
 import logging
+import warnings
 
 # Import correlation engine for consistent calculations
 from correlation.correlation_engine import CorrelationEngine
 
 logger = logging.getLogger(__name__)
+
+# Suppress warnings for cleaner output
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', category=FutureWarning)
 
 
 def calculate_rolling_correlation_matrix(
@@ -424,9 +429,88 @@ def calculate_hurst_simple(returns: np.ndarray) -> float:
     return np.clip(H, 0, 1)
 
 
+def apply_ledoit_wolf_shrinkage(correlation_matrix: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply Ledoit-Wolf shrinkage to correlation matrix for improved stability.
+    
+    Args:
+        correlation_matrix: Original correlation matrix
+        
+    Returns:
+        Shrunk correlation matrix
+    """
+    try:
+        # Convert correlation to covariance (assume unit variances)
+        cov_matrix = correlation_matrix.values
+        
+        # Ensure the matrix is symmetric
+        cov_matrix = (cov_matrix + cov_matrix.T) / 2
+        
+        # Make matrix positive semi-definite by eigenvalue clipping
+        eigenvals, eigenvecs = np.linalg.eigh(cov_matrix)
+        eigenvals = np.maximum(eigenvals, 1e-8)  # Ensure positive eigenvalues
+        cov_matrix = eigenvecs @ np.diag(eigenvals) @ eigenvecs.T
+        
+        # Ensure diagonal is 1 (correlation matrix property)
+        np.fill_diagonal(cov_matrix, 1.0)
+        
+        # Apply Ledoit-Wolf shrinkage
+        lw = LedoitWolf()
+        
+        # LedoitWolf expects data matrix, so we create synthetic returns
+        # that would produce our correlation matrix
+        n_assets = cov_matrix.shape[0]
+        n_samples = max(100, n_assets * 3)  # Ensure sufficient samples
+        
+        # Generate synthetic returns with the target correlation structure
+        np.random.seed(42)  # For reproducibility
+        try:
+            # Suppress the specific warning about covariance matrix
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', message='covariance is not symmetric positive-semidefinite')
+                synthetic_returns = np.random.multivariate_normal(
+                    mean=np.zeros(n_assets),
+                    cov=cov_matrix,
+                    size=n_samples
+                )
+        except np.linalg.LinAlgError:
+            # If still not positive definite, use identity matrix fallback
+            logger.warning("Correlation matrix still not positive definite, using regularized version")
+            regularized_cov = cov_matrix + 0.01 * np.eye(n_assets)
+            synthetic_returns = np.random.multivariate_normal(
+                mean=np.zeros(n_assets),
+                cov=regularized_cov,
+                size=n_samples
+            )
+        
+        # Apply shrinkage
+        shrunk_cov = lw.fit(synthetic_returns).covariance_
+        
+        # Convert back to correlation matrix
+        diag_sqrt = np.sqrt(np.diag(shrunk_cov))
+        shrunk_corr = shrunk_cov / np.outer(diag_sqrt, diag_sqrt)
+        
+        # Ensure diagonal is exactly 1
+        np.fill_diagonal(shrunk_corr, 1.0)
+        
+        shrunk_df = pd.DataFrame(shrunk_corr, 
+                               index=correlation_matrix.index,
+                               columns=correlation_matrix.columns)
+        
+        logger.info(f"Applied Ledoit-Wolf shrinkage with intensity {lw.shrinkage_:.3f}")
+        
+        return shrunk_df
+        
+    except Exception as e:
+        logger.warning(f"Error applying Ledoit-Wolf shrinkage: {e}")
+        return correlation_matrix
+
+
 def find_optimal_clusters(
     distance_matrix: np.ndarray,
-    max_clusters: int = 20
+    max_clusters: int = 20,
+    use_multiple_criteria: bool = True
 ) -> Tuple[int, Dict[int, float]]:
     """
     Determine optimal number of clusters using multiple criteria.
@@ -434,6 +518,7 @@ def find_optimal_clusters(
     Args:
         distance_matrix: Pairwise distance matrix
         max_clusters: Maximum number of clusters to test
+        use_multiple_criteria: Use multiple cluster validation metrics
         
     Returns:
         Tuple of (optimal number of clusters, scores dictionary)
@@ -447,38 +532,76 @@ def find_optimal_clusters(
     scores = {}
     
     for n_clusters in range(2, max_clusters + 1):
-        # Perform clustering
-        clusterer = AgglomerativeClustering(
-            n_clusters=n_clusters,
-            affinity='precomputed',
-            linkage='average'
-        )
+        # Perform clustering (using metric instead of affinity for newer scikit-learn)
+        try:
+            clusterer = AgglomerativeClustering(
+                n_clusters=n_clusters,
+                metric='precomputed',
+                linkage='average'
+            )
+        except TypeError:
+            # Fallback for older scikit-learn versions
+            clusterer = AgglomerativeClustering(
+                n_clusters=n_clusters,
+                affinity='precomputed',
+                linkage='average'
+            )
         labels = clusterer.fit_predict(distance_matrix)
         
-        # Calculate metrics
-        silhouette = silhouette_score(distance_matrix, labels, metric='precomputed')
+        # Calculate multiple metrics
+        metrics_dict = {'n_clusters': n_clusters}
         
-        # For Calinski-Harabasz, we need the original features, not distances
-        # So we'll use silhouette as the primary metric
-        scores[n_clusters] = {
-            'silhouette': silhouette,
-            'n_clusters': n_clusters
-        }
-    
-    # Find optimal number using elbow method on silhouette scores
-    silhouette_values = [scores[k]['silhouette'] for k in sorted(scores.keys())]
-    
-    # Simple elbow detection: find point with maximum second derivative
-    if len(silhouette_values) > 2:
-        first_derivative = np.diff(silhouette_values)
-        second_derivative = np.diff(first_derivative)
+        # Silhouette score
+        try:
+            silhouette = silhouette_score(distance_matrix, labels, metric='precomputed')
+            metrics_dict['silhouette'] = silhouette
+        except Exception as e:
+            logger.warning(f"Error calculating silhouette score for {n_clusters} clusters: {e}")
+            metrics_dict['silhouette'] = 0
         
-        # Find elbow point (maximum curvature)
-        elbow_idx = np.argmax(np.abs(second_derivative)) + 2  # +2 because of differencing
-        optimal_k = min(elbow_idx, max_clusters)
+        if use_multiple_criteria:
+            # Davies-Bouldin index (lower is better)
+            try:
+                # Convert distance matrix to feature matrix using MDS
+                from sklearn.manifold import MDS
+                mds = MDS(n_components=min(10, distance_matrix.shape[0] - 1), 
+                         dissimilarity='precomputed', random_state=42)
+                features_approx = mds.fit_transform(distance_matrix)
+                
+                from sklearn.metrics import davies_bouldin_score
+                db_score = davies_bouldin_score(features_approx, labels)
+                metrics_dict['davies_bouldin'] = db_score
+            except:
+                metrics_dict['davies_bouldin'] = float('inf')
+            
+            # Gap statistic approximation
+            inertia = calculate_clustering_inertia(distance_matrix, labels)
+            metrics_dict['inertia'] = inertia
+            
+            # Cluster balance (evenness of cluster sizes)
+            cluster_sizes = np.bincount(labels)
+            balance = 1 - (cluster_sizes.std() / cluster_sizes.mean()) if cluster_sizes.mean() > 0 else 0
+            metrics_dict['balance'] = balance
+        
+        scores[n_clusters] = metrics_dict
+    
+    if use_multiple_criteria:
+        # Multi-criteria optimization
+        optimal_k = find_optimal_k_multi_criteria(scores)
     else:
-        # Default to maximizing silhouette score
-        optimal_k = max(scores.keys(), key=lambda k: scores[k]['silhouette'])
+        # Simple silhouette-based selection
+        silhouette_values = [scores[k]['silhouette'] for k in sorted(scores.keys())]
+        
+        # Elbow detection on silhouette scores
+        if len(silhouette_values) > 2:
+            first_derivative = np.diff(silhouette_values)
+            second_derivative = np.diff(first_derivative)
+            
+            # Find elbow point (maximum curvature)
+            elbow_idx = np.argmax(np.abs(second_derivative)) + 2
+            optimal_k = min(elbow_idx, max_clusters)
+        else:
+            optimal_k = max(scores.keys(), key=lambda k: scores[k]['silhouette'])
     
     return optimal_k, scores
 
@@ -534,4 +657,286 @@ def create_minimum_spanning_tree(correlation_matrix: pd.DataFrame) -> Dict[str, 
         'edges': edges,
         'positions': pos,
         'graph': mst
+    }
+
+
+def calculate_clustering_inertia(distance_matrix: np.ndarray, labels: np.ndarray) -> float:
+    """
+    Calculate clustering inertia from distance matrix.
+    
+    Args:
+        distance_matrix: Pairwise distance matrix
+        labels: Cluster labels
+        
+    Returns:
+        Total within-cluster sum of squared distances
+    """
+    unique_labels = np.unique(labels)
+    total_inertia = 0.0
+    
+    for label in unique_labels:
+        cluster_indices = np.where(labels == label)[0]
+        
+        if len(cluster_indices) > 1:
+            # Sum of pairwise distances within this cluster
+            cluster_distances = distance_matrix[np.ix_(cluster_indices, cluster_indices)]
+            cluster_inertia = np.sum(cluster_distances) / (2 * len(cluster_indices))
+            total_inertia += cluster_inertia
+    
+    return float(total_inertia)
+
+
+def find_optimal_k_multi_criteria(scores: Dict[int, Dict[str, float]]) -> int:
+    """
+    Find optimal number of clusters using multiple criteria.
+    
+    Args:
+        scores: Dictionary of clustering scores for different k values
+        
+    Returns:
+        Optimal number of clusters
+    """
+    if not scores:
+        return 2
+    
+    k_values = sorted(scores.keys())
+    
+    # Normalize all metrics to [0, 1]
+    normalized_scores = {}
+    
+    for k in k_values:
+        normalized_scores[k] = {}
+        
+        # Silhouette: higher is better, already in [-1, 1], map to [0, 1]
+        silhouette = scores[k].get('silhouette', 0)
+        normalized_scores[k]['silhouette'] = (silhouette + 1) / 2
+        
+        # Davies-Bouldin: lower is better, invert and normalize
+        if 'davies_bouldin' in scores[k]:
+            db_values = [scores[kk]['davies_bouldin'] for kk in k_values 
+                        if 'davies_bouldin' in scores[kk] and scores[kk]['davies_bouldin'] < float('inf')]
+            if db_values:
+                db_max = max(db_values)
+                db_min = min(db_values)
+                if db_max > db_min:
+                    db_normalized = 1 - (scores[k]['davies_bouldin'] - db_min) / (db_max - db_min)
+                else:
+                    db_normalized = 0.5
+                normalized_scores[k]['davies_bouldin'] = max(0, db_normalized)
+        
+        # Balance: higher is better, already in [0, 1]
+        if 'balance' in scores[k]:
+            normalized_scores[k]['balance'] = max(0, min(1, scores[k]['balance']))
+        
+        # Inertia: lower is better (for gap statistic approximation)
+        if 'inertia' in scores[k]:
+            inertia_values = [scores[kk]['inertia'] for kk in k_values if 'inertia' in scores[kk]]
+            if inertia_values:
+                inertia_max = max(inertia_values)
+                inertia_min = min(inertia_values)
+                if inertia_max > inertia_min:
+                    inertia_normalized = 1 - (scores[k]['inertia'] - inertia_min) / (inertia_max - inertia_min)
+                else:
+                    inertia_normalized = 0.5
+                normalized_scores[k]['inertia'] = max(0, inertia_normalized)
+    
+    # Calculate composite score with weights
+    weights = {
+        'silhouette': 0.4,
+        'davies_bouldin': 0.2,
+        'balance': 0.2,
+        'inertia': 0.2
+    }
+    
+    composite_scores = {}
+    for k in k_values:
+        score = 0
+        total_weight = 0
+        
+        for metric, weight in weights.items():
+            if metric in normalized_scores[k]:
+                score += weight * normalized_scores[k][metric]
+                total_weight += weight
+        
+        if total_weight > 0:
+            composite_scores[k] = score / total_weight
+        else:
+            composite_scores[k] = 0
+    
+    # Find k with maximum composite score
+    optimal_k = max(composite_scores.keys(), key=lambda k: composite_scores[k])
+    
+    logger.info(f"Multi-criteria optimization selected k={optimal_k} with score {composite_scores[optimal_k]:.3f}")
+    
+    return optimal_k
+
+
+def enhanced_hierarchical_clustering(correlation_matrix: pd.DataFrame,
+                                   method: str = 'ward',
+                                   apply_shrinkage: bool = True,
+                                   find_optimal_k: bool = True) -> Dict[str, Any]:
+    """
+    Enhanced hierarchical clustering with multiple improvements.
+    
+    Args:
+        correlation_matrix: Correlation matrix
+        method: Linkage method ('ward', 'complete', 'average', 'single')
+        apply_shrinkage: Apply Ledoit-Wolf shrinkage
+        find_optimal_k: Automatically find optimal number of clusters
+        
+    Returns:
+        Dictionary with clustering results
+    """
+    if correlation_matrix.empty:
+        return {'error': 'empty_correlation_matrix'}
+    
+    # Apply shrinkage if requested
+    if apply_shrinkage:
+        logger.info("Applying Ledoit-Wolf shrinkage to correlation matrix")
+        shrunk_corr = apply_ledoit_wolf_shrinkage(correlation_matrix)
+    else:
+        shrunk_corr = correlation_matrix.copy()
+    
+    # Convert correlation to distance
+    if method == 'ward':
+        # Ward linkage requires Euclidean distance
+        distance_matrix = np.sqrt(2 * (1 - shrunk_corr))
+    else:
+        # Use angular distance for other methods
+        distance_matrix = np.sqrt(0.5 * (1 - shrunk_corr))
+    
+    # Perform hierarchical clustering
+    condensed_dist = squareform(distance_matrix)
+    linkage_matrix = sch.linkage(condensed_dist, method=method)
+    
+    results = {
+        'linkage_matrix': linkage_matrix,
+        'distance_matrix': distance_matrix,
+        'method': method,
+        'shrinkage_applied': apply_shrinkage
+    }
+    
+    # Find optimal number of clusters if requested
+    if find_optimal_k:
+        logger.info("Finding optimal number of clusters")
+        optimal_k, cluster_scores = find_optimal_clusters(distance_matrix.values, 
+                                                        max_clusters=min(20, len(correlation_matrix) // 2))
+        
+        # Get cluster labels for optimal k
+        labels = sch.fcluster(linkage_matrix, optimal_k, criterion='maxclust')
+        
+        results.update({
+            'optimal_k': optimal_k,
+            'cluster_scores': cluster_scores,
+            'cluster_labels': labels - 1,  # Convert to 0-based indexing
+            'silhouette_score': cluster_scores[optimal_k]['silhouette']
+        })
+        
+        # Create cluster dictionary
+        cluster_dict = {}
+        for idx, label in enumerate(labels):
+            if label not in cluster_dict:
+                cluster_dict[label] = []
+            cluster_dict[label].append(correlation_matrix.index[idx])
+        
+        results['clusters'] = cluster_dict
+    
+    logger.info(f"Enhanced hierarchical clustering complete. Method: {method}, "
+               f"Optimal k: {results.get('optimal_k', 'not calculated')}")
+    
+    return results
+
+
+def create_alpha_similarity_network(correlation_matrix: pd.DataFrame,
+                                   threshold: float = 0.3,
+                                   layout: str = 'spring') -> Dict[str, Any]:
+    """
+    Create a network representation of alpha similarities.
+    
+    Args:
+        correlation_matrix: Pairwise correlation matrix
+        threshold: Correlation threshold for edge creation
+        layout: Network layout algorithm ('spring', 'circular', 'random')
+        
+    Returns:
+        Dictionary with network information
+    """
+    import networkx as nx
+    
+    # Create graph
+    G = nx.Graph()
+    
+    # Add nodes
+    for alpha_id in correlation_matrix.index:
+        G.add_node(alpha_id)
+    
+    # Add edges for correlations above threshold
+    edges_added = 0
+    for i, alpha1 in enumerate(correlation_matrix.index):
+        for j, alpha2 in enumerate(correlation_matrix.columns):
+            if i < j:  # Only upper triangle
+                corr = correlation_matrix.iloc[i, j]
+                if abs(corr) >= threshold:
+                    G.add_edge(alpha1, alpha2, 
+                             weight=abs(corr),
+                             correlation=corr,
+                             edge_type='positive' if corr > 0 else 'negative')
+                    edges_added += 1
+    
+    if edges_added == 0:
+        logger.warning(f"No edges added with threshold {threshold}. Consider lowering the threshold.")
+        return {'error': 'no_edges', 'threshold': threshold}
+    
+    # Calculate layout
+    if layout == 'spring':
+        pos = nx.spring_layout(G, k=1/np.sqrt(len(G.nodes())), iterations=50)
+    elif layout == 'circular':
+        pos = nx.circular_layout(G)
+    elif layout == 'random':
+        pos = nx.random_layout(G)
+    else:
+        pos = nx.spring_layout(G)
+    
+    # Calculate network metrics
+    network_metrics = {
+        'n_nodes': G.number_of_nodes(),
+        'n_edges': G.number_of_edges(),
+        'density': nx.density(G),
+        'average_clustering': nx.average_clustering(G) if G.number_of_edges() > 0 else 0,
+        'n_connected_components': nx.number_connected_components(G)
+    }
+    
+    # Find communities using modularity-based partitioning
+    try:
+        import networkx.algorithms.community as community
+        communities = community.greedy_modularity_communities(G)
+        community_dict = {}
+        for i, community_set in enumerate(communities):
+            community_dict[f'community_{i}'] = list(community_set)
+        network_metrics['communities'] = community_dict
+        network_metrics['modularity'] = community.modularity(G, communities)
+    except Exception as e:
+        logger.warning(f"Could not calculate communities: {e}")
+    
+    # Identify central nodes
+    if G.number_of_edges() > 0:
+        centrality = nx.degree_centrality(G)
+        betweenness = nx.betweenness_centrality(G)
+        
+        # Top 5 central nodes
+        top_central = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_betweenness = sorted(betweenness.items(), key=lambda x: x[1], reverse=True)[:5]
+        
+        network_metrics['top_degree_central'] = top_central
+        network_metrics['top_betweenness_central'] = top_betweenness
+    
+    logger.info(f"Created similarity network: {network_metrics['n_nodes']} nodes, "
+               f"{network_metrics['n_edges']} edges, density={network_metrics['density']:.3f}")
+    
+    return {
+        'graph': G,
+        'positions': pos,
+        'network_metrics': network_metrics,
+        'threshold': threshold,
+        'layout': layout
     }

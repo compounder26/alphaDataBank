@@ -682,13 +682,13 @@ class AnalysisOperations:
                     JOIN alphas a ON ac.alpha_id = a.alpha_id
                     JOIN regions r ON a.region_id = r.region_id
                     WHERE r.region_name = :region
-                    AND ac.operators_unique ?| :operators
+                    AND ac.operators_unique ?| ARRAY[:operators]::text[]
                     AND ac.excluded = FALSE
                     """
                     params['region'] = region
                 else:
                     query += """
-                    WHERE ac.operators_unique ?| :operators
+                    WHERE ac.operators_unique ?| ARRAY[:operators]::text[]
                     AND ac.excluded = FALSE
                     """
                 
@@ -732,13 +732,13 @@ class AnalysisOperations:
                     JOIN alphas a ON ac.alpha_id = a.alpha_id
                     JOIN regions r ON a.region_id = r.region_id
                     WHERE r.region_name = :region
-                    AND ac.datafields_unique ?| :datafields
+                    AND ac.datafields_unique ?| ARRAY[:datafields]::text[]
                     AND ac.excluded = FALSE
                     """
                     params['region'] = region
                 else:
                     query += """
-                    WHERE ac.datafields_unique ?| :datafields
+                    WHERE ac.datafields_unique ?| ARRAY[:datafields]::text[]
                     AND ac.excluded = FALSE
                     """
                 

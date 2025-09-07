@@ -26,7 +26,7 @@ def main():
             print("✅ Analysis cache cleared successfully!")
             print("   All alphas will be re-analyzed on next dashboard run.")
             print("\n✨ Ready! You can now start the production server:")
-            print("   Windows: waitress-serve --port=8050 wsgi:server")
+            print("   Windows: waitress-serve --host=127.0.0.1 --port=8050 wsgi:server")
             print("   Linux/Mac: gunicorn -w 4 -b 127.0.0.1:8050 wsgi:server")
         else:
             print("⚠️ No cache to clear or cache clearing failed")

@@ -326,6 +326,11 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
         dcc.Store(id='current-pca-data', data=[]),
         dcc.Store(id='current-pca-info', data={}),
         dcc.Store(id='current-metadata', data=[]),
+        # Cluster profiles for interpretability
+        dcc.Store(id='tsne-cluster-profiles', data={}),
+        dcc.Store(id='umap-cluster-profiles', data={}),
+        dcc.Store(id='pca-cluster-profiles', data={}),
+        dcc.Store(id='main-cluster-profiles', data={}),
         # Pre-calculated heatmap data for all distance metrics
         dcc.Store(id='heatmap-data-simple', data={}),
         dcc.Store(id='heatmap-data-euclidean', data={}),
@@ -521,6 +526,20 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                     ])
                 ], className="mb-4"),
                 
+                # Cluster Information Card
+                dbc.Card([
+                    dbc.CardHeader("Clustering Information"),
+                    dbc.CardBody([
+                        html.P([
+                            "🎨 Points are colored by ", html.Strong("automatically detected groups"), " of similar trading strategies. ",
+                            "Each color represents alphas with similar risk/return patterns."
+                        ], className="mb-2"),
+                        html.Small([
+                            html.Strong("HDBSCAN algorithm"), " automatically determines the optimal number of clusters based on data density."
+                        ], className="text-muted")
+                    ])
+                ], className="mb-3"),
+                
                 # Alpha Highlighting Card (NEW)
                 dbc.Card([
                     dbc.CardHeader("Alpha Highlighting"),
@@ -550,6 +569,35 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                         # Clear highlights button
                         dbc.Button("Clear Highlights", id="clear-highlights-btn", 
                                   color="outline-secondary", size="sm")
+                    ])
+                ], className="mb-3"),
+                
+                # Display Options Card (NEW)
+                dbc.Card([
+                    dbc.CardHeader("Display Options"),
+                    dbc.CardBody([
+                        dcc.RadioItems(
+                            id='cluster-color-mode',
+                            options=[
+                                {'label': 'Color by Cluster', 'value': 'cluster'},
+                                {'label': 'Single Color', 'value': 'single'}
+                            ],
+                            value='cluster',  # Default to cluster coloring
+                            inline=True,
+                            className="mb-2"
+                        ),
+                        html.Small(
+                            "Choose whether to color points by cluster assignment or use a single color.",
+                            className="text-muted"
+                        )
+                    ])
+                ], className="mb-3"),
+                
+                # Cluster Statistics Panel
+                dbc.Card([
+                    dbc.CardHeader("Cluster Statistics"),
+                    dbc.CardBody([
+                        html.Div(id='cluster-statistics', className="p-2")
                     ])
                 ], className="mb-3"),
                 
@@ -679,13 +727,17 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
          Output('heatmap-data-simple', 'data'),
          Output('heatmap-data-euclidean', 'data'),
          Output('heatmap-data-angular', 'data'),
+         Output('tsne-cluster-profiles', 'data'),
+         Output('umap-cluster-profiles', 'data'),
+         Output('pca-cluster-profiles', 'data'),
+         Output('main-cluster-profiles', 'data'),
          Output('clustering-region-info', 'children')],
         Input('clustering-region-selector', 'value'),
         State('all-region-data', 'data')
     )
     def update_clustering_data_for_region(selected_region, all_region_data):
         if not selected_region or not all_region_data or selected_region not in all_region_data:
-            return [], [], [], [], [], [], [], {}, {}, {}, {}, {}, "No data available"
+            return [], [], [], [], [], [], [], {}, {}, {}, {}, {}, {}, {}, {}, {}, "No data available"
         
         region_data = all_region_data[selected_region]
         
@@ -719,6 +771,12 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
         heatmap_euclidean = region_data.get('heatmap_data_euclidean', {})
         heatmap_angular = region_data.get('heatmap_data_angular', {})
         
+        # Load cluster profiles for interpretability
+        tsne_profiles = region_data.get('tsne_cluster_profiles', {})
+        umap_profiles = region_data.get('umap_cluster_profiles', {})
+        pca_profiles = region_data.get('pca_cluster_profiles', {})
+        main_profiles = region_data.get('main_cluster_profiles', {})
+        
         # Create info text
         alpha_count = region_data.get('alpha_count', 0)
         timestamp = region_data.get('timestamp', 'Unknown')
@@ -727,6 +785,7 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
         return (mds_data_current, mds_data_simple, mds_data_euclidean, mds_data_angular,
                 tsne_data, umap_data, pca_data, pca_info, metadata_data,
                 heatmap_simple, heatmap_euclidean, heatmap_angular,
+                tsne_profiles, umap_profiles, pca_profiles, main_profiles,
                 info_text)
     
     # Callback to update selected clustering region
@@ -1998,9 +2057,14 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
             'mds': [
                 html.H5("📊 Multidimensional Scaling (MDS) on Correlation Matrix", className="text-primary"),
                 html.P([
+                    html.B("Input Data: "),
+                    html.Span("Uses correlation matrix of alpha PnL returns (not performance features like Sharpe ratio). ", className="text-info"),
+                    "Converts correlations to distances using d_ij = √(2(1 - ρ_ij)) where ρ is the correlation coefficient."
+                ]),
+                html.P([
                     html.B("What it shows: "),
                     "Maps alphas to 2D space where distance represents correlation dissimilarity. ",
-                    "Uses the corrected formula d_ij = √(2(1 - ρ_ij)) where ρ is the correlation of percentage returns."
+                    "Unlike other methods, MDS directly measures alpha overlap rather than performance similarity."
                 ]),
                 html.P([
                     html.B("Why useful: "),
@@ -2096,6 +2160,180 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
             *explanation
         ])
     
+    # Cluster Statistics callback
+    @app.callback(
+        Output('cluster-statistics', 'children'),
+        Input('current-pca-data', 'data'),
+        Input('current-umap-data', 'data'), 
+        Input('current-tsne-data', 'data'),
+        Input('current-mds-data', 'data'),
+        Input('pca-cluster-profiles', 'data'),
+        Input('umap-cluster-profiles', 'data'),
+        Input('tsne-cluster-profiles', 'data'),
+        Input('main-cluster-profiles', 'data'),
+        Input('method-selector', 'value')
+    )
+    def update_cluster_statistics(pca_data, umap_data, tsne_data, mds_data, 
+                                 pca_profiles, umap_profiles, tsne_profiles, main_profiles, method):
+        
+        # Handle heatmap method (no cluster statistics)
+        if method == 'heatmap':
+            return html.P("Cluster statistics not available for correlation heatmap.", className="text-info")
+        
+        # Get the appropriate data based on selected method
+        data_mapping = {
+            'pca': pca_data,
+            'umap': umap_data,
+            'tsne': tsne_data,
+            'mds': mds_data
+        }
+        
+        data = data_mapping.get(method, {})
+        if not data:
+            return html.P("No clustering data available.", className="text-warning")
+        
+        # Convert list data (records format) to DataFrame to extract cluster information
+        if isinstance(data, list):
+            if not data:
+                return html.P("No clustering data available.", className="text-warning")
+            try:
+                df = pd.DataFrame(data)
+                if 'cluster' not in df.columns:
+                    return html.P("No cluster information available for this method.", className="text-warning")
+                
+                # Extract cluster information from DataFrame
+                cluster_info = {}
+                has_clusters = False
+                
+                for _, row in df.iterrows():
+                    alpha_id = row.get('index', 'Unknown')
+                    cluster_val = row.get('cluster')
+                    
+                    if cluster_val is not None and not (isinstance(cluster_val, float) and pd.isna(cluster_val)):
+                        has_clusters = True
+                        if cluster_val >= 0:
+                            cluster_name = f"Cluster {int(cluster_val)}"
+                        else:
+                            cluster_name = "Outliers"
+                        
+                        if cluster_name not in cluster_info:
+                            cluster_info[cluster_name] = []
+                        cluster_info[cluster_name].append(alpha_id)
+                        
+            except Exception as e:
+                return html.P(f"Error processing cluster data: {str(e)}", className="text-danger")
+        
+        # Handle dictionary format (legacy support)
+        elif isinstance(data, dict):
+            cluster_info = {}
+            has_clusters = False
+            
+            for alpha_id, alpha_data in data.items():
+                if isinstance(alpha_data, dict) and 'cluster' in alpha_data:
+                    cluster_val = alpha_data['cluster']
+                    if cluster_val is not None and not (isinstance(cluster_val, float) and pd.isna(cluster_val)):
+                        has_clusters = True
+                        if cluster_val >= 0:
+                            cluster_name = f"Cluster {int(cluster_val)}"
+                        else:
+                            cluster_name = "Outliers"
+                        
+                        if cluster_name not in cluster_info:
+                            cluster_info[cluster_name] = []
+                        cluster_info[cluster_name].append(alpha_id)
+        else:
+            return html.P("Invalid clustering data format.", className="text-warning")
+        
+        if not has_clusters or not cluster_info:
+            return html.P("No cluster information available.", className="text-warning")
+        
+        # Calculate statistics
+        total_alphas = sum(len(alphas) for alphas in cluster_info.values())
+        n_clusters = len([k for k in cluster_info.keys() if k != "Outliers"])
+        n_outliers = len(cluster_info.get("Outliers", []))
+        
+        # Create statistics display
+        stats_components = [
+            html.H6("Cluster Summary", className="mb-2"),
+            html.P([
+                html.Strong("Total Alphas: "), f"{total_alphas}",
+                html.Br(),
+                html.Strong("Clusters Found: "), f"{n_clusters}",
+                html.Br(), 
+                html.Strong("Outliers: "), f"{n_outliers} ({n_outliers/total_alphas*100:.1f}%)" if total_alphas > 0 else "0"
+            ], className="mb-3")
+        ]
+        
+        # Add cluster breakdown
+        if cluster_info:
+            stats_components.append(html.H6("Cluster Breakdown", className="mb-2"))
+            
+            cluster_items = []
+            # Use the same color scheme as the plot - enhanced with more distinct colors
+            colors = [
+                '#e41a1c',  # Red
+                '#377eb8',  # Blue  
+                '#4daf4a',  # Green
+                '#984ea3',  # Purple
+                '#ff7f00',  # Orange
+                '#ffff33',  # Yellow
+                '#a65628',  # Brown
+                '#f781bf',  # Pink
+                '#66c2a5',  # Teal
+                '#fc8d62',  # Light orange
+                '#8da0cb',  # Light blue
+                '#e78ac3',  # Light pink
+                '#a6d854',  # Yellow-green
+                '#ffd92f',  # Gold
+                '#e5c494',  # Beige
+                '#b3b3b3'   # Light gray
+            ]
+            
+            # Custom sorting function for proper cluster ordering (0, 1, 2... then Outliers)
+            def cluster_sort_key(item):
+                cluster_name, alphas = item
+                if cluster_name == "Outliers":
+                    return (1, 0)  # Sort Outliers last
+                else:
+                    # Extract numeric part from "Cluster X" 
+                    cluster_num = int(cluster_name.split()[-1])
+                    return (0, cluster_num)  # Sort clusters numerically
+            
+            cluster_idx = 0
+            for cluster_name, alphas in sorted(cluster_info.items(), key=cluster_sort_key):
+                if cluster_name == "Outliers":
+                    color = "#808080"  # Gray for outliers
+                else:
+                    color = colors[cluster_idx % len(colors)]
+                    cluster_idx += 1
+                
+                cluster_items.append(
+                    dbc.ListGroupItem([
+                        html.Span([
+                            html.Span("●", style={"color": color, "font-size": "16px", "font-weight": "bold"}),
+                            f" {cluster_name}: {len(alphas)} alphas",
+                        ]),
+                        html.Small(f" ({len(alphas)/total_alphas*100:.1f}%)", className="text-muted")
+                    ])
+                )
+            
+            stats_components.append(
+                dbc.ListGroup(cluster_items, flush=True)
+            )
+            
+        # Add cluster feature profiles for interpretability
+        profiles_mapping = {
+            'pca': pca_profiles,
+            'umap': umap_profiles,
+            'tsne': tsne_profiles,
+            'mds': main_profiles  # MDS uses main feature-based profiles
+        }
+        
+        current_profiles = profiles_mapping.get(method, {})
+                
+        
+        return html.Div(stats_components)
+    
     # Clustering callback (updated for multi-region support and advanced methods)
     @app.callback(
         Output('clustering-plot', 'figure'),
@@ -2110,13 +2348,14 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
         Input('selected-clustering-region', 'data'),
         Input('operator-highlighted-alphas', 'data'),
         Input('datafield-highlighted-alphas', 'data'),
+        Input('cluster-color-mode', 'value'),
         State('distance-metric', 'value') if ADVANCED_CLUSTERING_AVAILABLE else Input('selected-clustering-region', 'data'),
         State('heatmap-data-simple', 'data'),
         State('heatmap-data-euclidean', 'data'),
         State('heatmap-data-angular', 'data')
     )
     def update_plot(method, mds_data, tsne_data, umap_data, pca_data, pca_info, selected_alpha, 
-                   all_region_data, selected_region, operator_alphas, datafield_alphas, distance_metric,
+                   all_region_data, selected_region, operator_alphas, datafield_alphas, color_mode, distance_metric,
                    heatmap_simple, heatmap_euclidean, heatmap_angular):
         
         # Handle advanced clustering methods using pre-calculated data
@@ -2183,7 +2422,7 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                 var_exp = pca_info['variance_explained']
                 pc1_var = var_exp.get('pc1', 0) * 100  # Convert to percentage
                 pc2_var = var_exp.get('pc2', 0) * 100
-                total_var = var_exp.get('total', 0) * 100
+                total_var = var_exp.get('total_2d', 0) * 100
                 title = f"PCA on Performance Features (Total Variance: {total_var:.1f}%)"
                 
                 # Create meaningful axis labels
@@ -2255,10 +2494,26 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                 
                 match_text = " | ".join(match_info)
                 
+                # Add cluster information if available
+                cluster_info = ""
+                if 'cluster' in plot_data.columns:
+                    cluster_data = plot_data.loc[plot_data['index'] == alpha_id, 'cluster']
+                    if not cluster_data.empty:
+                        cluster_val = cluster_data.iloc[0]
+                        if cluster_val >= 0:
+                            cluster_info = f"<br>Cluster: {int(cluster_val)}"
+                            # Add probability if available
+                            if 'cluster_probability' in plot_data.columns:
+                                prob_data = plot_data.loc[plot_data['index'] == alpha_id, 'cluster_probability']
+                                if not prob_data.empty and not pd.isna(prob_data.iloc[0]):
+                                    cluster_info += f" (p={prob_data.iloc[0]:.2f})"
+                        else:
+                            cluster_info = "<br>Cluster: Outlier"
+                
                 # Format hover text with better structure
                 hover_text = f"""<b>{alpha_id}</b>{' (' + match_text + ')' if match_text else ''}<br>
                 Expression: <br>{formatted_code}<br>
-                <br>
+                {cluster_info}<br>
                 Universe: {details.get('universe', 'N/A')}<br>
                 Delay: {details.get('delay', 'N/A')}<br>
                 Sharpe: {details.get('is_sharpe', 0):.3f}<br>
@@ -2331,43 +2586,384 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                             performance_values.append(None)
                     break
             
-            # Create scatter plot with color if we found a suitable metric
-            if performance_metric and performance_values:
-                plot_data_with_perf = plot_data.copy()
-                plot_data_with_perf['performance'] = performance_values
+            # Always use cluster coloring
+            if 'cluster' in plot_data.columns:
+                # Check if we have cluster data
+                has_clusters = 'cluster' in plot_data.columns and plot_data['cluster'].notna().any()
                 
-                fig = px.scatter(
-                    plot_data_with_perf, 
-                    x='x', 
-                    y='y',
-                    color='performance',
-                    hover_name='index',
-                    labels=axis_labels,
-                    template=TEMPLATE,
-                    color_continuous_scale='RdYlGn',  # Red (low) to Green (high) performance
-                    title=f"{title} (colored by {performance_metric.replace('_', ' ').title()})"
-                )
-                fig.update_coloraxes(colorbar_title=performance_metric.replace('_', ' ').title())
-            else:
-                # Fallback to regular scatter plot
-                fig = px.scatter(
-                    plot_data, 
-                    x='x', 
-                    y='y',
-                    hover_name='index',
-                    labels=axis_labels,
-                    template=TEMPLATE
-                )
+                if has_clusters:
+                    plot_data_with_clusters = plot_data.copy()
+                    # Convert cluster labels to strings for discrete coloring
+                    plot_data_with_clusters['cluster_str'] = plot_data_with_clusters['cluster'].apply(
+                        lambda x: f'Cluster {int(x)}' if x >= 0 else 'Outlier'
+                    )
+                    
+                    # Use distinct, bright colors for clusters, gray for outliers - enhanced palette
+                    colors = [
+                        '#e41a1c',  # Red
+                        '#377eb8',  # Blue  
+                        '#4daf4a',  # Green
+                        '#984ea3',  # Purple
+                        '#ff7f00',  # Orange
+                        '#ffff33',  # Yellow
+                        '#a65628',  # Brown
+                        '#f781bf',  # Pink
+                        '#66c2a5',  # Teal
+                        '#fc8d62',  # Light orange
+                        '#8da0cb',  # Light blue
+                        '#e78ac3',  # Light pink
+                        '#a6d854',  # Yellow-green
+                        '#ffd92f',  # Gold
+                        '#e5c494',  # Beige
+                        '#b3b3b3'   # Light gray
+                    ]
+                    color_map = {}
+                    # Custom sorting for cluster strings (Cluster 0, 1, 2... then Outlier)
+                    def cluster_str_sort_key(cluster_str):
+                        if cluster_str == 'Outlier':
+                            return (1, 0)  # Sort Outlier last
+                        else:
+                            # Extract numeric part from "Cluster X"
+                            cluster_num = int(cluster_str.split()[-1])
+                            return (0, cluster_num)  # Sort clusters numerically
+                    
+                    unique_clusters = sorted(plot_data_with_clusters['cluster_str'].unique(), key=cluster_str_sort_key)
+                    
+                    cluster_idx = 0
+                    for cluster in unique_clusters:
+                        if cluster == 'Outlier':
+                            color_map[cluster] = '#808080'  # Gray for outliers
+                        else:
+                            color_map[cluster] = colors[cluster_idx % len(colors)]
+                            cluster_idx += 1
+                    
+                    # Create scatter plot using go.Scatter for better color control
+                    fig = go.Figure()
+                    
+                    # Handle single color mode vs cluster coloring
+                    if color_mode == 'single':
+                        # Single color mode - all points in one color
+                        all_hover_texts = []
+                        for alpha_id in plot_data['index']:
+                            try:
+                                alpha_idx = plot_data['index'].tolist().index(alpha_id)
+                                if alpha_idx < len(hover_texts):
+                                    all_hover_texts.append(hover_texts[alpha_idx])
+                                else:
+                                    all_hover_texts.append(f"<b>{alpha_id}</b>")
+                            except (ValueError, IndexError):
+                                all_hover_texts.append(f"<b>{alpha_id}</b>")
+                        
+                        fig.add_trace(go.Scatter(
+                            x=plot_data['x'],
+                            y=plot_data['y'],
+                            mode='markers',
+                            name='Alphas',
+                            marker=dict(
+                                color='#377eb8',  # Single blue color
+                                size=12,
+                                line=dict(width=1, color='white')
+                            ),
+                            customdata=plot_data['index'],
+                            text=plot_data['index'],
+                            hovertext=all_hover_texts,
+                            hovertemplate='%{hovertext}<br>Click to view on WorldQuant Brain<extra></extra>'
+                        ))
+                    else:
+                        # Cluster coloring mode (original behavior)
+                        # Add one trace per cluster for proper legend colors
+                        for cluster_name in unique_clusters:
+                            cluster_data = plot_data_with_clusters[plot_data_with_clusters['cluster_str'] == cluster_name]
+                            
+                            # Get hover texts for this cluster's alphas
+                            cluster_hover_texts = []
+                            for alpha_id in cluster_data['index']:
+                                # Find the corresponding hover text from the hover_texts list
+                                try:
+                                    alpha_idx = plot_data['index'].tolist().index(alpha_id)
+                                    if alpha_idx < len(hover_texts):
+                                        cluster_hover_texts.append(hover_texts[alpha_idx])
+                                    else:
+                                        cluster_hover_texts.append(f"<b>{alpha_id}</b><br>Cluster: {cluster_name}")
+                                except (ValueError, IndexError):
+                                    cluster_hover_texts.append(f"<b>{alpha_id}</b><br>Cluster: {cluster_name}")
+                            
+                            fig.add_trace(go.Scatter(
+                                x=cluster_data['x'],
+                                y=cluster_data['y'],
+                                mode='markers',
+                                name=cluster_name,
+                                marker=dict(
+                                    color=color_map[cluster_name],
+                                    size=12,
+                                    line=dict(width=1, color='white')
+                                ),
+                                customdata=cluster_data['index'],
+                                text=cluster_data['index'],
+                                hovertext=cluster_hover_texts,
+                                hovertemplate='%{hovertext}<br>Click to view on WorldQuant Brain<extra></extra>'
+                            ))
+                    
+                    # Update layout
+                    fig.update_layout(
+                        title=f"{title} (colored by cluster)",
+                        xaxis_title=axis_labels.get('x', 'X'),
+                        yaxis_title=axis_labels.get('y', 'Y'),
+                        template=TEMPLATE,
+                        hovermode='closest'
+                    )
+                    
+                else:
+                    # No cluster data available - show basic plot
+                    fig = go.Figure()
+                    
+                    # Create hover texts for this case if not available
+                    basic_hover_texts = []
+                    for alpha_id in plot_data['index']:
+                        if len(hover_texts) > 0:
+                            try:
+                                alpha_idx = plot_data['index'].tolist().index(alpha_id)
+                                if alpha_idx < len(hover_texts):
+                                    basic_hover_texts.append(hover_texts[alpha_idx])
+                                else:
+                                    basic_hover_texts.append(f"<b>{alpha_id}</b><br>Click to view on WorldQuant Brain")
+                            except (ValueError, IndexError):
+                                basic_hover_texts.append(f"<b>{alpha_id}</b><br>Click to view on WorldQuant Brain")
+                        else:
+                            basic_hover_texts.append(f"<b>{alpha_id}</b><br>Click to view on WorldQuant Brain")
+                    
+                    fig.add_trace(go.Scatter(
+                        x=plot_data['x'],
+                        y=plot_data['y'],
+                        mode='markers',
+                        marker=dict(
+                            color='steelblue',
+                            size=10,
+                            line=dict(width=1, color='white')
+                        ),
+                        customdata=plot_data['index'],
+                        text=plot_data['index'],
+                        hovertext=basic_hover_texts,
+                        hovertemplate='%{hovertext}<br>Click to view on WorldQuant Brain<extra></extra>',
+                        showlegend=False
+                    ))
+                    
+                    fig.update_layout(
+                        title=title,
+                        xaxis_title=axis_labels.get('x', 'X'),
+                        yaxis_title=axis_labels.get('y', 'Y'),
+                        template=TEMPLATE,
+                        hovermode='closest'
+                    )
         else:
-            # Regular scatter plot for non-PCA methods or when no performance data
-            fig = px.scatter(
-                plot_data, 
-                x='x', 
-                y='y',
-                hover_name='index',
-                labels=axis_labels,
-                template=TEMPLATE
-            )
+            # Regular scatter plot for non-PCA methods - always use clusters if available
+            if 'cluster' in plot_data.columns:
+                has_clusters = 'cluster' in plot_data.columns and plot_data['cluster'].notna().any()
+                
+                if has_clusters:
+                    plot_data_with_clusters = plot_data.copy()
+                    plot_data_with_clusters['cluster_str'] = plot_data_with_clusters['cluster'].apply(
+                        lambda x: f'Cluster {int(x)}' if x >= 0 else 'Outlier'
+                    )
+                    
+                    # Apply the same enhanced color scheme as above
+                    colors = [
+                        '#e41a1c',  # Red
+                        '#377eb8',  # Blue  
+                        '#4daf4a',  # Green
+                        '#984ea3',  # Purple
+                        '#ff7f00',  # Orange
+                        '#ffff33',  # Yellow
+                        '#a65628',  # Brown
+                        '#f781bf',  # Pink
+                        '#66c2a5',  # Teal
+                        '#fc8d62',  # Light orange
+                        '#8da0cb',  # Light blue
+                        '#e78ac3',  # Light pink
+                        '#a6d854',  # Yellow-green
+                        '#ffd92f',  # Gold
+                        '#e5c494',  # Beige
+                        '#b3b3b3'   # Light gray
+                    ]
+                    color_map = {}
+                    # Custom sorting for cluster strings (Cluster 0, 1, 2... then Outlier)
+                    def cluster_str_sort_key(cluster_str):
+                        if cluster_str == 'Outlier':
+                            return (1, 0)  # Sort Outlier last
+                        else:
+                            # Extract numeric part from "Cluster X"
+                            cluster_num = int(cluster_str.split()[-1])
+                            return (0, cluster_num)  # Sort clusters numerically
+                    
+                    unique_clusters = sorted(plot_data_with_clusters['cluster_str'].unique(), key=cluster_str_sort_key)
+                    
+                    cluster_idx = 0
+                    for cluster in unique_clusters:
+                        if cluster == 'Outlier':
+                            color_map[cluster] = '#808080'
+                        else:
+                            color_map[cluster] = colors[cluster_idx % len(colors)]
+                            cluster_idx += 1
+                    
+                    # Create scatter plot using go.Scatter for better color control
+                    fig = go.Figure()
+                    
+                    # Handle single color mode vs cluster coloring
+                    if color_mode == 'single':
+                        # Single color mode - all points in one color
+                        all_hover_texts = []
+                        for alpha_id in plot_data['index']:
+                            try:
+                                alpha_idx = plot_data['index'].tolist().index(alpha_id)
+                                if alpha_idx < len(hover_texts):
+                                    all_hover_texts.append(hover_texts[alpha_idx])
+                                else:
+                                    all_hover_texts.append(f"<b>{alpha_id}</b>")
+                            except (ValueError, IndexError):
+                                all_hover_texts.append(f"<b>{alpha_id}</b>")
+                        
+                        fig.add_trace(go.Scatter(
+                            x=plot_data['x'],
+                            y=plot_data['y'],
+                            mode='markers',
+                            name='Alphas',
+                            marker=dict(
+                                color='#377eb8',  # Single blue color
+                                size=12,
+                                line=dict(width=1, color='white')
+                            ),
+                            customdata=plot_data['index'],
+                            text=plot_data['index'],
+                            hovertext=all_hover_texts,
+                            hovertemplate='%{hovertext}<br>Click to view on WorldQuant Brain<extra></extra>'
+                        ))
+                    else:
+                        # Cluster coloring mode (original behavior)
+                        # Add one trace per cluster for proper legend colors
+                        for cluster_name in unique_clusters:
+                            cluster_data = plot_data_with_clusters[plot_data_with_clusters['cluster_str'] == cluster_name]
+                            
+                            # Get hover texts for this cluster's alphas
+                            cluster_hover_texts = []
+                            for alpha_id in cluster_data['index']:
+                                # Find the corresponding hover text from the hover_texts list
+                                try:
+                                    alpha_idx = plot_data['index'].tolist().index(alpha_id)
+                                    if alpha_idx < len(hover_texts):
+                                        cluster_hover_texts.append(hover_texts[alpha_idx])
+                                    else:
+                                        cluster_hover_texts.append(f"<b>{alpha_id}</b><br>Cluster: {cluster_name}")
+                                except (ValueError, IndexError):
+                                    cluster_hover_texts.append(f"<b>{alpha_id}</b><br>Cluster: {cluster_name}")
+                            
+                            fig.add_trace(go.Scatter(
+                                x=cluster_data['x'],
+                                y=cluster_data['y'],
+                                mode='markers',
+                                name=cluster_name,
+                                marker=dict(
+                                    color=color_map[cluster_name],
+                                    size=12,
+                                    line=dict(width=1, color='white')
+                                ),
+                                customdata=cluster_data['index'],
+                                text=cluster_data['index'],
+                                hovertext=cluster_hover_texts,
+                                hovertemplate='%{hovertext}<br>Click to view on WorldQuant Brain<extra></extra>'
+                            ))
+                    
+                    # Update layout
+                    fig.update_layout(
+                        title=f"{title} (colored by cluster)",
+                        xaxis_title=axis_labels.get('x', 'X'),
+                        yaxis_title=axis_labels.get('y', 'Y'),
+                        template=TEMPLATE,
+                        hovermode='closest'
+                    )
+                else:
+                    # No cluster data available
+                    fig = go.Figure()
+                    
+                    # Create hover texts for this case if not available
+                    basic_hover_texts = []
+                    for alpha_id in plot_data['index']:
+                        if len(hover_texts) > 0:
+                            try:
+                                alpha_idx = plot_data['index'].tolist().index(alpha_id)
+                                if alpha_idx < len(hover_texts):
+                                    basic_hover_texts.append(hover_texts[alpha_idx])
+                                else:
+                                    basic_hover_texts.append(f"<b>{alpha_id}</b><br>Click to view on WorldQuant Brain")
+                            except (ValueError, IndexError):
+                                basic_hover_texts.append(f"<b>{alpha_id}</b><br>Click to view on WorldQuant Brain")
+                        else:
+                            basic_hover_texts.append(f"<b>{alpha_id}</b><br>Click to view on WorldQuant Brain")
+                    
+                    fig.add_trace(go.Scatter(
+                        x=plot_data['x'],
+                        y=plot_data['y'],
+                        mode='markers',
+                        marker=dict(
+                            color='steelblue',
+                            size=10,
+                            line=dict(width=1, color='white')
+                        ),
+                        customdata=plot_data['index'],
+                        text=plot_data['index'],
+                        hovertext=basic_hover_texts,
+                        hovertemplate='%{hovertext}<br>Click to view on WorldQuant Brain<extra></extra>',
+                        showlegend=False
+                    ))
+                    
+                    fig.update_layout(
+                        title=title,
+                        xaxis_title=axis_labels.get('x', 'X'),
+                        yaxis_title=axis_labels.get('y', 'Y'),
+                        template=TEMPLATE,
+                        hovermode='closest'
+                    )
+            else:
+                # No cluster column - basic plot
+                fig = go.Figure()
+                
+                # Create hover texts for this case if not available
+                basic_hover_texts = []
+                for alpha_id in plot_data['index']:
+                    if len(hover_texts) > 0:
+                        try:
+                            alpha_idx = plot_data['index'].tolist().index(alpha_id)
+                            if alpha_idx < len(hover_texts):
+                                basic_hover_texts.append(hover_texts[alpha_idx])
+                            else:
+                                basic_hover_texts.append(f"<b>{alpha_id}</b><br>Click to view on WorldQuant Brain")
+                        except (ValueError, IndexError):
+                            basic_hover_texts.append(f"<b>{alpha_id}</b><br>Click to view on WorldQuant Brain")
+                    else:
+                        basic_hover_texts.append(f"<b>{alpha_id}</b><br>Click to view on WorldQuant Brain")
+                
+                fig.add_trace(go.Scatter(
+                    x=plot_data['x'],
+                    y=plot_data['y'],
+                    mode='markers',
+                    marker=dict(
+                        color='steelblue',
+                        size=10,
+                        line=dict(width=1, color='white')
+                    ),
+                    customdata=plot_data['index'],
+                    text=plot_data['index'],
+                    hovertext=basic_hover_texts,
+                    hovertemplate='%{hovertext}<br>Click to view on WorldQuant Brain<extra></extra>',
+                    showlegend=False
+                ))
+                
+                fig.update_layout(
+                    title=title,
+                    xaxis_title=axis_labels.get('x', 'X'),
+                    yaxis_title=axis_labels.get('y', 'Y'),
+                    template=TEMPLATE,
+                    hovermode='closest'
+                )
         
         # Update layout (title may have been modified for PCA with performance overlay)
         # Check if the title was already set for PCA with performance coloring
@@ -2383,13 +2979,8 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
             clickmode='event+select'
         )
         
-        # Update traces with enhanced hover information
-        fig.update_traces(
-            marker=dict(size=10, opacity=0.8),
-            hovertext=hover_texts,
-            customdata=alpha_ids if 'alpha_ids' in locals() else plot_data['index'].tolist() if not plot_data.empty and 'index' in plot_data.columns else [],
-            hovertemplate='%{hovertext}<br>Click to view on WorldQuant Brain<extra></extra>'
-        )
+        # Note: Hover information is now handled per cluster trace above
+        # No need to update all traces since we're using individual traces per cluster
         
         # Add green highlights for operator matches
         if operator_alphas and not plot_data.empty:
@@ -2448,54 +3039,6 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                     showlegend=False
                 ))
         
-        # Add biplot arrows for PCA method (feature vectors)
-        if method == 'pca' and pca_info and 'loadings' in pca_info:
-            loadings = pca_info['loadings']
-            if loadings.get('pc1') and loadings.get('pc2'):
-                # Scale factor for arrow visibility (adjust based on data range)
-                if not plot_data.empty:
-                    x_range = plot_data['x'].max() - plot_data['x'].min()
-                    y_range = plot_data['y'].max() - plot_data['y'].min()
-                    scale_factor = min(x_range, y_range) * 0.8  # Scale arrows to 80% of data range
-                else:
-                    scale_factor = 2
-                
-                # Add arrows for top 5 most contributing features
-                if 'top_features' in pca_info:
-                    top_features = pca_info['top_features'].get('pc1', [])[:5]  # Top 5 features
-                    
-                    for i, (feature, contrib) in enumerate(top_features):
-                        pc1_loading = loadings['pc1'].get(feature, 0)
-                        pc2_loading = loadings['pc2'].get(feature, 0)
-                        
-                        # Only show arrows for features with significant contribution
-                        if abs(pc1_loading) > 0.1 or abs(pc2_loading) > 0.1:
-                            arrow_x = pc1_loading * scale_factor
-                            arrow_y = pc2_loading * scale_factor
-                            
-                            # Add arrow line
-                            fig.add_trace(go.Scatter(
-                                x=[0, arrow_x],
-                                y=[0, arrow_y],
-                                mode='lines+markers',
-                                line=dict(color='rgba(255,0,0,0.6)', width=2),
-                                marker=dict(size=[0, 8], symbol=['circle', 'arrow-right']),
-                                showlegend=i == 0,  # Only show legend for first arrow
-                                name='Feature Vectors' if i == 0 else '',
-                                hovertemplate=f'{feature}<br>PC1: {pc1_loading:.3f}<br>PC2: {pc2_loading:.3f}<extra></extra>'
-                            ))
-                            
-                            # Add feature label
-                            fig.add_annotation(
-                                x=arrow_x,
-                                y=arrow_y,
-                                text=feature.replace('_', ' ').title(),
-                                showarrow=False,
-                                font=dict(size=10, color='red'),
-                                bgcolor='rgba(255,255,255,0.8)',
-                                bordercolor='red',
-                                borderwidth=1
-                            )
         
         # Create separate annotations to prevent overlap and use proper color indicators
         annotations = []
@@ -2552,60 +3095,79 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
         
         content = []
         
+        
         # Add variance explained information
         if 'variance_explained' in pca_info:
             var_exp = pca_info['variance_explained']
             pc1_var = var_exp.get('pc1', 0) * 100
             pc2_var = var_exp.get('pc2', 0) * 100
-            total_var = var_exp.get('total', 0) * 100
+            total_var = var_exp.get('total_2d', 0) * 100
             
             content.append(html.P([
                 html.B("Variance Explained: "),
-                f"PC1 explains {pc1_var:.1f}% of variance, PC2 explains {pc2_var:.1f}% ",
-                f"(Total: {total_var:.1f}%)"
+                f"PC1: {pc1_var:.1f}%, PC2: {pc2_var:.1f}% (2D captures {total_var:.1f}% of variance)"
             ], className="text-info"))
         
-        # Add feature contributions
-        if 'top_features' in pca_info:
-            top_features = pca_info['top_features']
-            
-            if top_features.get('pc1'):
-                pc1_features = [f"{feat} ({contrib:.2f})" for feat, contrib in top_features['pc1']]
-                content.append(html.P([
-                    html.B("PC1 driven by: "),
-                    ", ".join(pc1_features)
-                ], className="small"))
-            
-            if top_features.get('pc2'):
-                pc2_features = [f"{feat} ({contrib:.2f})" for feat, contrib in top_features['pc2']]
-                content.append(html.P([
-                    html.B("PC2 driven by: "),
-                    ", ".join(pc2_features)
-                ], className="small"))
-        
-        # Add interpretation hints
+        # Enhanced interpretation with category information
         if 'interpretation' in pca_info:
             interp = pca_info['interpretation']
             if interp.get('pc1') and interp['pc1'] != "Mixed factors":
                 content.append(html.P([
-                    html.B("X-axis (PC1): "),
-                    f"Right = {interp['pc1'].split('|')[0].replace('Higher: ', '').strip()}" if '|' in interp['pc1'] else f"Right = Higher {interp['pc1'].replace('Higher: ', '')}"
+                    html.B("PC1 Drivers: "),
+                    interp['pc1']
                 ], className="small text-success"))
-            
             if interp.get('pc2') and interp['pc2'] != "Mixed factors":
                 content.append(html.P([
-                    html.B("Y-axis (PC2): "),
-                    f"Up = {interp['pc2'].split('|')[0].replace('Higher: ', '').strip()}" if '|' in interp['pc2'] else f"Up = Higher {interp['pc2'].replace('Higher: ', '')}"
+                    html.B("PC2 Drivers: "),
+                    interp['pc2']
                 ], className="small text-success"))
         
-        # Add interpretability warning
-        if 'variance_explained' in pca_info:
-            total_var = pca_info['variance_explained'].get('total', 0) * 100
-            if total_var < 50:
-                content.append(html.Div([
-                    html.I(className="fas fa-exclamation-triangle me-2"),
-                    f"⚠️ Low variance explained ({total_var:.1f}%) - interpretation may be limited"
-                ], className="alert alert-warning alert-sm mt-2"))
+        # Add feature contributions with color coding
+        if 'top_features' in pca_info:
+            top_features = pca_info['top_features']
+            
+            if top_features.get('pc1'):
+                pc1_items = []
+                for feat, contrib in top_features['pc1']:
+                    # Determine category color
+                    color = "#666"
+                    if feat.startswith('spiked_'): color = "#1f77b4"
+                    elif feat.startswith('multiscale_'): color = "#2ca02c" 
+                    elif feat.startswith('risk_'): color = "#d62728"
+                    elif feat.startswith('metadata_'): color = "#ff7f0e"
+                    
+                    clean_name = feat.replace('spiked_', '').replace('multiscale_', '').replace('risk_', '').replace('metadata_', '')
+                    pc1_items.append(html.Span([
+                        html.Span("●", style={"color": color}),
+                        f" {clean_name} ({contrib:.2f})"
+                    ], className="me-2"))
+                
+                content.append(html.P([
+                    html.B("PC1 Top Contributors: "),
+                    html.Div(pc1_items, style={"line-height": "1.6"})
+                ], className="small"))
+            
+            if top_features.get('pc2'):
+                pc2_items = []
+                for feat, contrib in top_features['pc2']:
+                    # Determine category color
+                    color = "#666"
+                    if feat.startswith('spiked_'): color = "#1f77b4"
+                    elif feat.startswith('multiscale_'): color = "#2ca02c"
+                    elif feat.startswith('risk_'): color = "#d62728"
+                    elif feat.startswith('metadata_'): color = "#ff7f0e"
+                    
+                    clean_name = feat.replace('spiked_', '').replace('multiscale_', '').replace('risk_', '').replace('metadata_', '')
+                    pc2_items.append(html.Span([
+                        html.Span("●", style={"color": color}),
+                        f" {clean_name} ({contrib:.2f})"
+                    ], className="me-2"))
+                
+                content.append(html.P([
+                    html.B("PC2 Top Contributors: "),
+                    html.Div(pc2_items, style={"line-height": "1.6"})
+                ], className="small"))
+        
         
         return content
     
@@ -2642,6 +3204,35 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
             )
             return fig
         
+        # Get feature categories for color-coding
+        feature_categories = pca_info.get('feature_categories', {})
+        
+        # Create enhanced feature display names and categories
+        enhanced_display_names = []
+        feature_category_labels = []
+        category_colors = {
+            'spiked': '#1f77b4',      # Blue - Factor models
+            'multiscale': '#2ca02c',  # Green - Temporal patterns  
+            'risk': '#d62728',        # Red - Risk metrics
+            'metadata': '#ff7f0e'     # Orange - Metadata
+        }
+        
+        for feature in feature_names:
+            # Create cleaner display name
+            display_name = feature.replace('_', ' ').title()
+            
+            # Determine category and shorten name
+            category = 'other'
+            for cat_name, cat_features in feature_categories.items():
+                if feature in cat_features:
+                    category = cat_name
+                    # Remove category prefix from display name
+                    display_name = display_name.replace(f'{cat_name.title()} ', '')
+                    break
+            
+            enhanced_display_names.append(display_name)
+            feature_category_labels.append(category)
+        
         # Create loadings matrix for heatmap
         loadings_matrix = []
         components = ['PC1', 'PC2']
@@ -2652,32 +3243,90 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
         
         loadings_matrix = [pc1_values, pc2_values]
         
+        # Create custom hover text with category information
+        hover_text = []
+        for i, component in enumerate(components):
+            component_text = []
+            values = loadings_matrix[i]
+            for j, (feature, value, category, display_name) in enumerate(
+                zip(feature_names, values, feature_category_labels, enhanced_display_names)
+            ):
+                component_text.append(
+                    f'<b>{component}</b><br>'
+                    f'Feature: {display_name}<br>'
+                    f'Category: {category.title()}<br>'
+                    f'Loading: {value:.3f}<br>'
+                    f'<i>Full name: {feature}</i>'
+                )
+            hover_text.append(component_text)
+        
         # Create heatmap
         fig = go.Figure(data=go.Heatmap(
             z=loadings_matrix,
-            x=[name.replace('_', ' ').title() for name in feature_names],
+            x=enhanced_display_names,
             y=components,
             colorscale='RdBu',  # Red-Blue diverging colorscale (good for loadings)
             zmid=0,  # Center at 0
             colorbar=dict(title="Loading Value"),
-            hovertemplate='<b>%{y}</b><br>Feature: %{x}<br>Loading: %{z:.3f}<extra></extra>'
+            hovertemplate='%{customdata}<extra></extra>',
+            customdata=hover_text
         ))
         
+        # Add category color bars at the bottom
+        category_counts = {cat: feature_category_labels.count(cat) for cat in set(feature_category_labels)}
+        
+        # Create category annotations
+        total_features = len(feature_names)
+        category_text = []
+        for category, count in category_counts.items():
+            if count > 0:
+                color = category_colors.get(category, '#808080')
+                category_text.append(f'<span style="color:{color};">●</span> {category.title()}: {count}')
+        
+        subtitle = f"Total Features: {total_features} | " + " | ".join(category_text)
+        
         # Add variance explained information to title if available
-        title = "PCA Feature Loadings"
+        title = "Enhanced PCA Feature Loadings"
         if 'variance_explained' in pca_info:
             var_exp = pca_info['variance_explained']
             pc1_var = var_exp.get('pc1', 0) * 100
             pc2_var = var_exp.get('pc2', 0) * 100
-            title = f"PCA Feature Loadings (PC1: {pc1_var:.1f}%, PC2: {pc2_var:.1f}%)"
+            title = f"Enhanced PCA Feature Loadings (PC1: {pc1_var:.1f}%, PC2: {pc2_var:.1f}%)"
+        
+        # Add colored rectangles for feature categories on x-axis
+        shapes = []
+        current_x = -0.5
+        for i, category in enumerate(feature_category_labels):
+            color = category_colors.get(category, '#808080')
+            # Add a thin colored rectangle at the bottom
+            shapes.append(dict(
+                type="rect",
+                x0=current_x, x1=current_x + 1,
+                y0=-2.8, y1=-2.6,
+                fillcolor=color,
+                opacity=0.6,
+                line=dict(width=0)
+            ))
+            current_x += 1
         
         fig.update_layout(
-            title=title,
-            xaxis_title="Features",
-            yaxis_title="Principal Components",
+            title=dict(
+                text=f"{title}<br><sub>{subtitle}</sub>",
+                x=0.5,
+                font=dict(size=16)
+            ),
+            xaxis_title="Features (Color-coded by Category)",
+            yaxis_title="Principal Components", 
             template=TEMPLATE,
-            height=400,
-            xaxis=dict(tickangle=45)
+            height=450,
+            xaxis=dict(
+                tickangle=45,
+                range=[-0.5, len(feature_names) - 0.5]
+            ),
+            yaxis=dict(
+                range=[-3, 2]  # Make room for category bars
+            ),
+            shapes=shapes
         )
         
         return fig
@@ -2786,7 +3435,11 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
         
         # Handle other visualization methods (single alpha display)
         else:
-            alpha_id = point.get('customdata', point.get('hovertext', 'unknown'))
+            alpha_id = point.get('customdata')
+            if not alpha_id:
+                alpha_id = point.get('text')
+            if not alpha_id:
+                alpha_id = point.get('hovertext', 'unknown')
         
         # Create WorldQuant Brain URL
         wq_url = f"https://platform.worldquantbrain.com/alpha/{alpha_id}"
