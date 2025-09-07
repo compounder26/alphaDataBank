@@ -2,6 +2,9 @@ import pandas as pd
 import os
 import time
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 brain_api_url = os.environ.get("BRAIN_API_URL", "https://api.worldquantbrain.com")
 brain_url = os.environ.get("BRAIN_URL", "https://platform.worldquantbrain.com")
@@ -242,40 +245,111 @@ def get_datasets(
 
 def get_datafields(
     s,
-    instrument_type: str = 'EQUITY',
-    region: str = 'EUR',
+    instrument_type: str = "EQUITY",
+    region: str = "ASI",
     delay: int = 1,
-    universe: str = 'TOP2500',
-    dataset_id: str = '',
-    search: str = ''
-):
+    universe: str = "MINVOL1M",
+    theme: str = "false",
+    dataset_id: str = "",
+    data_type: str = "VECTOR",
+    search: str = "",
+) -> pd.DataFrame:
+    """
+    Retrieve available datafields based on specified parameters.
+
+    Args:
+        s: An authenticated session object.
+        instrument_type (str, optional): The type of instrument. Defaults to "EQUITY".
+        region (str, optional): The region. Defaults to "ASI".
+        delay (int, optional): The delay. Defaults to 1.
+        universe (str, optional): The universe. Defaults to "MINVOL1M".
+        theme (str, optional): The theme. Defaults to "false".
+        dataset_id (str, optional): The ID of a specific dataset. Defaults to "".
+        data_type (str, optional): The type of data. Defaults to "VECTOR".
+        search (str, optional): A search string to filter datafields. Defaults to "".
+
+    Returns:
+        pandas.DataFrame: A DataFrame containing information about available datafields.
+    """
+    type_param = f"&type={data_type}" if data_type != "ALL" else ""
     if len(search) == 0:
-        url_template = brain_api_url + "/data-fields?" +\
-            f"&instrumentType={instrument_type}" +\
-            f"&region={region}&delay={str(delay)}&universe={universe}&dataset.id={dataset_id}&limit=50" +\
-            "&offset={x}"
-        count = s.get(url_template.format(x=0)).json()['count'] 
+        url_template = (
+            brain_api_url
+            + "/data-fields?"
+            + f"&instrumentType={instrument_type}"
+            + f"&region={region}&delay={str(delay)}&universe={universe}{type_param}&dataset.id={dataset_id}&limit=50"
+            + "&offset={x}"
+        )
+        count = s.get(url_template.format(x=0)).json()["count"]
+        if count == 0:
+            logger.warning(
+                f"No fields found: region={region}, delay={str(delay)}, universe={universe}, "
+                f"type={data_type}, dataset.id={dataset_id}"
+            )
+            return pd.DataFrame()
+
     else:
-        url_template = brain_api_url + "/data-fields?" +\
-            f"&instrumentType={instrument_type}" +\
-            f"&region={region}&delay={str(delay)}&universe={universe}&limit=50" +\
-            f"&search={search}" +\
-            "&offset={x}"
+        url_template = (
+            brain_api_url
+            + "/data-fields?"
+            + f"&instrumentType={instrument_type}"
+            + f"&region={region}&delay={str(delay)}&universe={universe}{type_param}&limit=50"
+            + f"&search={search}"
+            + "&offset={x}"
+        )
         count = 100
-    
-    max_try=5
+
+    max_try = 5
     datafields_list = []
     for x in range(0, count, 50):
         for _ in range(max_try):
             datafields = s.get(url_template.format(x=x))
-            if 'results' in datafields.json():
+            if "results" in datafields.json():
                 break
-            else:
-                time.sleep(5)
-            
-        datafields_list.append(datafields.json()['results'])
+            time.sleep(5)
+
+        datafields_list.append(datafields.json()["results"])
 
     datafields_list_flat = [item for sublist in datafields_list for item in sublist]
 
     datafields_df = pd.DataFrame(datafields_list_flat)
+    datafields_df = expand_dict_columns(datafields_df)
     return datafields_df
+
+
+def expand_dict_columns(df):
+    """
+    Expand dictionary columns in a DataFrame into separate columns.
+    
+    Args:
+        df (pd.DataFrame): DataFrame with potential dictionary columns
+        
+    Returns:
+        pd.DataFrame: DataFrame with expanded dictionary columns
+    """
+    if df.empty:
+        return df
+    
+    result_df = df.copy()
+    
+    # Common columns that might contain dictionaries
+    dict_columns_to_expand = ['dataset', 'category', 'subcategory']
+    
+    for col in dict_columns_to_expand:
+        if col in result_df.columns:
+            try:
+                # Check if column contains dictionaries
+                sample_value = result_df[col].dropna().iloc[0] if not result_df[col].dropna().empty else None
+                if isinstance(sample_value, dict):
+                    # Expand dictionary into separate columns
+                    expanded = pd.json_normalize(result_df[col].dropna())
+                    # Add prefix to avoid column name conflicts
+                    expanded.columns = [f"{col}_{subcol}" for subcol in expanded.columns]
+                    # Merge with original DataFrame
+                    expanded.index = result_df[col].dropna().index
+                    result_df = result_df.join(expanded, how='left')
+            except (IndexError, TypeError, AttributeError):
+                # If expansion fails, keep original column
+                pass
+    
+    return result_df

@@ -547,6 +547,8 @@ def get_pnl_data_for_alphas(alpha_ids: List[str], region: str) -> Dict[str, Dict
         table_name = f"pnl_{region.lower()}"
         alphas_with_data = 0
         
+        alphas_without_data = []
+        
         for alpha_id in alpha_ids:
             # Using named parameters for pd.read_sql with SQLAlchemy engine
             query = f"""
@@ -570,11 +572,16 @@ def get_pnl_data_for_alphas(alpha_ids: List[str], region: str) -> Dict[str, Dict
                 # Still include the alpha in the result but with an empty dataframe
                 # This avoids KeyError when accessing alphas without data
                 result[alpha_id] = {'df': None}
+                alphas_without_data.append(alpha_id)
         
         if alphas_with_data == 0:
             logger.warning(f"No PNL data found for any of the {len(alpha_ids)} alphas in region {region}")
         else:
             logger.info(f"Retrieved PNL data for {alphas_with_data} out of {len(alpha_ids)} alphas in region {region}")
+            
+        # Log specific alphas without data for investigation
+        if alphas_without_data:
+            logger.warning(f"Alphas with no PNL data in region {region}: {alphas_without_data}")
         
         return result
     except Exception as e:

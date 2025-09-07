@@ -27,6 +27,15 @@ Examples:
     
     # Include clustering data if available
     python run_analysis_dashboard.py --data-file clustering_results.json
+    
+    # Fetch fresh operators/datafields and clear cache for re-analysis
+    python run_analysis_dashboard.py --renew
+    
+    # Clear analysis cache to force re-analysis (without fetching new data)
+    python run_analysis_dashboard.py --clear-cache
+    
+    # Import existing CSV datafields to database for better performance
+    python run_analysis_dashboard.py --import-csv
 """
 
 import sys
@@ -35,6 +44,81 @@ import argparse
 
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+def fetch_dynamic_platform_data(force_refresh: bool = False):
+    """
+    Fetch operators and datafields from API if requested.
+    
+    Args:
+        force_refresh: If True, fetch fresh data. If False, use cached data if available.
+        
+    Returns:
+        Tuple of (operators_file_path, datafields_saved_to_db, using_dynamic_data)
+    """
+    try:
+        from api.platform_data_fetcher import PlatformDataFetcher
+        
+        print("🔄 Fetching platform data (operators and datafields)...")
+        fetcher = PlatformDataFetcher()
+        
+        # Fetch and cache data
+        operators_cache, datafields_cache = fetcher.fetch_and_cache_all(force_refresh=force_refresh)
+        
+        if operators_cache and datafields_cache:
+            print("✅ Successfully fetched and cached platform data!")
+            print(f"   Operators cache: {operators_cache}")
+            print(f"   Datafields cache: {datafields_cache}")
+            return operators_cache, datafields_cache, True
+        else:
+            print("⚠️ Failed to fetch platform data, will use static files")
+            return None, None, False
+            
+    except ImportError as e:
+        print(f"⚠️ Could not import platform data fetcher: {e}")
+        print("   Will use static files instead")
+        return None, None, False
+    except Exception as e:
+        print(f"⚠️ Error fetching platform data: {e}")
+        print("   Will use static files instead")
+        return None, None, False
+
+def check_and_auto_fetch_platform_data():
+    """
+    Check if operators/datafields cache exist. If not, auto-fetch them.
+    
+    Returns:
+        Tuple of (operators_file_path, datafields_saved_to_db, using_dynamic_data)
+    """
+    try:
+        from api.platform_data_fetcher import PlatformDataFetcher
+        
+        fetcher = PlatformDataFetcher()
+        
+        # Check if operators cache exists (datafields now in database)
+        operators_exist = os.path.exists(fetcher.operators_cache_file)
+        
+        if operators_exist:
+            print("Found existing operators cache")
+            return fetcher.operators_cache_file, True, True
+        
+        # Auto-fetch missing data
+        missing_items = []
+        if not operators_exist:
+            missing_items.append("operators")
+        # Always check/refresh datafields in database
+        missing_items.append("datafields")
+            
+        print(f"Missing cache files: {', '.join(missing_items)}")
+        print("Auto-fetching missing platform data...")
+        
+        return fetch_dynamic_platform_data(force_refresh=False)
+        
+    except ImportError as e:
+        print(f"Warning: Could not import platform data fetcher: {e}")
+        return None, None, False
+    except Exception as e:
+        print(f"Warning: Error checking platform data: {e}")
+        return None, None, False
 
 def check_or_generate_clustering_data(region='USA'):
     """Check if clustering data exists for any region, generate if not."""
@@ -100,10 +184,60 @@ def generate_all_regions_if_requested(regions_list):
     
     return generated_files
 
-def auto_generate_missing_regions():
+def delete_all_clustering_files():
+    """Delete all existing clustering JSON files to force fresh recalculation."""
+    import glob
+    from datetime import datetime
+    
+    print(f"\n🗑️ Cleaning up old clustering files at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Patterns for clustering files
+    patterns = [
+        "analysis/clustering/alpha_clustering_*.json",
+        "clustering_results_*.json",
+        "alpha_clustering_*.json"
+    ]
+    
+    deleted_count = 0
+    deleted_files = []
+    for pattern in patterns:
+        files = glob.glob(pattern)
+        for file in files:
+            try:
+                # Get file age before deletion
+                file_age = datetime.now() - datetime.fromtimestamp(os.path.getctime(file))
+                os.remove(file)
+                deleted_files.append((file, file_age))
+                deleted_count += 1
+            except Exception as e:
+                print(f"   ⚠️ Could not delete {file}: {e}")
+    
+    if deleted_count > 0:
+        print(f"✅ Deleted {deleted_count} old clustering files:")
+        for file, age in deleted_files[:5]:  # Show first 5 files
+            age_str = f"{age.days}d {age.seconds//3600}h" if age.days > 0 else f"{age.seconds//3600}h {(age.seconds%3600)//60}m"
+            print(f"   - {os.path.basename(file)} (was {age_str} old)")
+        if deleted_count > 5:
+            print(f"   ... and {deleted_count - 5} more files")
+    else:
+        print("   No clustering files found to delete")
+    
+    return deleted_count
+
+def auto_generate_missing_regions(force_regenerate=True):
     """Auto-generate clustering data for all regions that don't have existing files."""
     from config.database_config import REGIONS
     import glob
+    
+    if force_regenerate:
+        # Delete all existing clustering files first
+        delete_all_clustering_files()
+        print("\n🔄 Force regenerating clustering data for ALL regions...")
+        
+        # Generate for all regions since we deleted everything
+        generated_files = generate_all_regions_if_requested(REGIONS)
+        print(f"\n✅ Generated {len(generated_files)} new clustering files")
+        return [(region, None) for region in REGIONS]
     
     print("Checking for existing clustering files across all regions...")
     
@@ -144,27 +278,119 @@ def main():
     parser.add_argument("--region", type=str, default='USA', help="Region for clustering analysis")
     parser.add_argument("--all-regions", action="store_true", help="Generate clustering data for all regions")
     parser.add_argument("--regions", nargs='*', help="List of specific regions to generate clustering for")
+    parser.add_argument("--renew", action="store_true", help="Fetch fresh operators and datafields from API (user-specific)")
+    parser.add_argument("--clear-cache", action="store_true", help="Clear analysis cache to force re-analysis of all alphas")
+    parser.add_argument("--keep-clustering", action="store_true", help="Keep existing clustering files instead of regenerating")
+    parser.add_argument("--import-csv", action="store_true", help="Import existing datafields CSV to database for better performance")
     
     args = parser.parse_args()
     
-    # Handle multi-region generation first
-    if args.all_regions and not args.no_clustering:
-        from config.database_config import REGIONS
-        print("Generating clustering data for all regions...")
-        generate_all_regions_if_requested(REGIONS)
-        clustering_file = check_or_generate_clustering_data(args.region)  # Use default region for dashboard
-    elif args.regions and not args.no_clustering:
-        print(f"Generating clustering data for specified regions: {args.regions}")
-        generate_all_regions_if_requested(args.regions)
-        clustering_file = check_or_generate_clustering_data(args.regions[0])  # Use first region for dashboard
-    elif not args.no_clustering:
-        # Auto-generate missing regions by default, then use specified region for dashboard
-        print("Auto-generating missing region clustering data...")
-        auto_generate_missing_regions()
-        clustering_file = args.data_file or check_or_generate_clustering_data(args.region)
+    # Handle dynamic platform data fetching
+    dynamic_operators_file = None
+    using_dynamic_data = False
+    
+    if args.renew:
+        # Force refresh of operators and datafields
+        dynamic_operators_file, datafields_saved, using_dynamic_data = fetch_dynamic_platform_data(force_refresh=True)
+        
+        # Clear analysis cache when renewing operators/datafields since exclusion logic may change
+        if using_dynamic_data:
+            print("🔄 Clearing analysis cache due to updated operators/datafields...")
+            try:
+                from scripts.clear_analysis_cache import clear_analysis_cache
+                if clear_analysis_cache():
+                    print("✅ Analysis cache cleared - all alphas will be re-analyzed with new operators/datafields")
+                else:
+                    print("⚠️ Failed to clear analysis cache - some exclusions may be outdated")
+            except Exception as e:
+                print(f"⚠️ Could not clear analysis cache: {e}")
+                print("   Some exclusions may be outdated until manual cache clear")
     else:
+        # Auto-fetch operators/datafields if they don't exist (first-time use)
+        dynamic_operators_file, datafields_saved, using_dynamic_data = check_and_auto_fetch_platform_data()
+        
+        # Clear analysis cache if we fetched new data
+        if using_dynamic_data and dynamic_operators_file and datafields_saved:
+            # Check if operators file is newly created (less than 5 minutes old)
+            import os
+            from datetime import datetime, timedelta
+            
+            operators_age = datetime.now() - datetime.fromtimestamp(os.path.getctime(dynamic_operators_file))
+            
+            if operators_age < timedelta(minutes=5):
+                print("🔄 Clearing analysis cache for newly fetched platform data...")
+                try:
+                    from scripts.clear_analysis_cache import clear_analysis_cache
+                    if clear_analysis_cache():
+                        print("✅ Analysis cache cleared - all alphas will be re-analyzed with fresh platform data")
+                    else:
+                        print("⚠️ Failed to clear analysis cache - some exclusions may be outdated")
+                except Exception as e:
+                    print(f"⚠️ Could not clear analysis cache: {e}")
+                    print("   Some exclusions may be outdated until manual cache clear")
+    
+    # Handle explicit cache clearing
+    if args.clear_cache:
+        print("🔄 Clearing analysis cache as requested...")
+        try:
+            from scripts.clear_analysis_cache import clear_analysis_cache
+            if clear_analysis_cache():
+                print("✅ Analysis cache cleared - all alphas will be re-analyzed")
+            else:
+                print("⚠️ Failed to clear analysis cache")
+        except Exception as e:
+            print(f"⚠️ Could not clear analysis cache: {e}")
+    
+    # Handle explicit CSV import (legacy support)
+    if args.import_csv:
+        print("⚠️ CSV import is no longer supported - datafields are now stored directly in database")
+        print("   Use --renew to fetch fresh datafields data")
+    
+    # Handle multi-region generation first
+    if args.no_clustering:
         # No clustering mode
         clustering_file = None
+        print("📊 Running dashboard without clustering (--no-clustering specified)")
+    else:
+        # Determine if we should force regeneration
+        force_regenerate = not args.keep_clustering
+        
+        if force_regenerate:
+            print("\n🔄 FORCE REGENERATING ALL CLUSTERING DATA")
+            print("   (Use --keep-clustering to reuse existing files)")
+            print("=" * 60)
+        
+        if args.all_regions:
+            from config.database_config import REGIONS
+            if force_regenerate:
+                # Delete all existing files and regenerate everything
+                delete_all_clustering_files()
+                print("Generating fresh clustering data for all regions...")
+                generate_all_regions_if_requested(REGIONS)
+            else:
+                print("Generating clustering data for all regions (keeping existing)...")
+                auto_generate_missing_regions(force_regenerate=False)
+            clustering_file = check_or_generate_clustering_data(args.region)  # Use default region for dashboard
+        elif args.regions:
+            if force_regenerate:
+                # Delete files for specified regions and regenerate
+                import glob
+                for region in args.regions:
+                    pattern = f"analysis/clustering/alpha_clustering_{region}_*.json"
+                    for file in glob.glob(pattern):
+                        try:
+                            os.remove(file)
+                            print(f"Deleted: {file}")
+                        except:
+                            pass
+            print(f"Generating clustering data for specified regions: {args.regions}")
+            generate_all_regions_if_requested(args.regions)
+            clustering_file = check_or_generate_clustering_data(args.regions[0])  # Use first region for dashboard
+        else:
+            # Default behavior: regenerate all regions unless --keep-clustering is specified
+            print("Auto-generating clustering data...")
+            auto_generate_missing_regions(force_regenerate=force_regenerate)
+            clustering_file = args.data_file or check_or_generate_clustering_data(args.region)
     
     # Import here to avoid import errors if dependencies are missing
     try:
@@ -180,6 +406,14 @@ def main():
                 # Test if alpha_analysis_cache table exists
                 result = connection.execute(text("SELECT 1 FROM alpha_analysis_cache LIMIT 1"))
                 print("Analysis database schema is ready.")
+                
+                # Check if datafields table has data
+                datafields_count = connection.execute(text("SELECT COUNT(*) FROM datafields")).scalar()
+                if datafields_count == 0:
+                    print("⚠️ Datafields table is empty. Please run with --renew to populate datafields.")
+                    print("   Dashboard will continue but may have limited datafield analysis functionality.")
+                else:
+                    print(f"Datafields table contains {datafields_count} entries")
         except psycopg2.errors.UndefinedTable as e:
             if 'alpha_analysis_cache' in str(e):
                 print("Analysis cache table missing. Initializing analysis database schema...")
@@ -210,6 +444,10 @@ def main():
             sys.argv.append('--debug')
         if args.no_browser:
             sys.argv.append('--no-browser')
+        
+        # Pass dynamic data files if available (regardless of whether they were just fetched or already existed)
+        if dynamic_operators_file:
+            sys.argv.extend(['--operators-file', dynamic_operators_file])
         
         from analysis.clustering.visualization_server import main as server_main
         server_main()

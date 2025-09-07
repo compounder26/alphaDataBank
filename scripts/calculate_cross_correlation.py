@@ -43,7 +43,7 @@ def fetch_alpha_pnl_flexible(session: requests.Session, alpha_id: str) -> pd.Dat
         try:
             result = session.get(
                 f"{brain_api_url}/alphas/{alpha_id}/recordsets/pnl",
-                timeout=(10, 30)
+                timeout=(10, 60)
             )
             
             if "retry-after" in result.headers:

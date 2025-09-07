@@ -42,8 +42,8 @@ def get_robust_session():
     """
     # Configure retry strategy at the connection level
     retry_strategy = Retry(
-        total=3,                   # Number of retries at the connection level
-        backoff_factor=1,          # Each retry will wait 1, 2, 4... seconds
+        total=False,               # Infinite retries at the connection level
+        backoff_factor=5,          # Each retry will wait 5, 10, 15... seconds  
         status_forcelist=[429, 500, 502, 503, 504],  # Status codes to retry on
         allowed_methods=["GET"]    # Only retry GET requests
     )
@@ -367,19 +367,19 @@ def scrape_alphas_by_region(session: requests.Session,
 
 def get_alpha_pnl(session: requests.Session, alpha_id: str) -> pd.DataFrame:
     """
-    Get alpha PNL data from the WorldQuant Brain API with robust retries.
+    Get alpha PNL data from the WorldQuant Brain API with infinite retries for transient errors.
 
     Args:
         session: The authenticated requests.Session object.
         alpha_id: The alpha ID to fetch PNL for.
 
     Returns:
-        DataFrame containing PNL data with Date as index, or empty DataFrame on failure.
+        DataFrame containing PNL data with Date as index, or empty DataFrame on permanent failure.
     """
     global _alpha_request_times
     brain_api_url = "https://api.worldquantbrain.com"
-    max_retries = 5
     default_retry_seconds = 15  # Base retry time if not specified by API
+    max_backoff_seconds = 300  # Maximum backoff time (5 minutes)
 
     # Check if we need to wait before making this request (pre-emptive rate limiting)
     now = time.time()
@@ -394,23 +394,25 @@ def get_alpha_pnl(session: requests.Session, alpha_id: str) -> pd.DataFrame:
     # Update last request time
     _alpha_request_times[alpha_id] = time.time()
 
-    for attempt in range(max_retries):
+    attempt = 0
+    while True:  # Infinite retry loop for transient errors
+        attempt += 1
         try:
-            logger.debug(f"Fetching PNL for alpha {alpha_id}, Attempt {attempt + 1}/{max_retries}")
+            logger.debug(f"Fetching PNL for alpha {alpha_id}, Attempt {attempt}")
             
             # Use proper headers for API request with increased timeout for potentially slow responses
             result = authenticated_get(
                 f"{brain_api_url}/alphas/{alpha_id}/recordsets/pnl", 
                 session=session,
                 headers=DEFAULT_API_HEADERS,
-                timeout=(10, 30)  # (connect timeout, read timeout)
+                timeout=(10, 60)  # (connect timeout, read timeout)
             )
 
             if "retry-after" in result.headers:
                 try:
                     retry_after_seconds = float(result.headers["retry-after"])
                     # Actually use the API's suggested retry time with a small buffer
-                    logger.info(f"API advised retry after {retry_after_seconds}s for alpha {alpha_id}. Waiting for that duration (Attempt {attempt + 1})")
+                    logger.info(f"API advised retry after {retry_after_seconds}s for alpha {alpha_id}. Waiting for that duration (Attempt {attempt})")
                     time.sleep(retry_after_seconds + 0.1)  # Add a small buffer
                     continue
                 except (ValueError, TypeError):
@@ -425,13 +427,14 @@ def get_alpha_pnl(session: requests.Session, alpha_id: str) -> pd.DataFrame:
             if result.status_code == 200:
                 # Check for empty content, which might be a subtle rate limit or no data
                 if not result.content:
-                    logger.warning(f"Received 200 OK with empty content for alpha {alpha_id} (Attempt {attempt + 1}). Retrying in {default_retry_seconds}s...")
-                    if attempt < max_retries - 1:
-                        time.sleep(default_retry_seconds)
-                        continue
-                    else:
-                        logger.error(f"Received 200 OK with empty content for alpha {alpha_id} after {max_retries} attempts. Assuming no PNL data.")
+                    # After multiple attempts with empty content, assume no data available
+                    if attempt >= 10:
+                        logger.error(f"Received 200 OK with empty content for alpha {alpha_id} after {attempt} attempts. Assuming no PNL data.")
                         return pd.DataFrame()
+                    
+                    logger.warning(f"Received 200 OK with empty content for alpha {alpha_id} (Attempt {attempt}). Retrying in {default_retry_seconds}s...")
+                    time.sleep(default_retry_seconds)
+                    continue
 
                 try:
                     pnl_data = result.json()
@@ -497,50 +500,39 @@ def get_alpha_pnl(session: requests.Session, alpha_id: str) -> pd.DataFrame:
                     return pnl_df
 
                 except json.JSONDecodeError as je:
-                    logger.error(f"JSON decode error for alpha {alpha_id} (Attempt {attempt + 1}): {je}. Response text: {result.text[:200]}")
-                    # Fall through to retry logic if not last attempt
+                    logger.error(f"JSON decode error for alpha {alpha_id} (Attempt {attempt}): {je}. Response text: {result.text[:200]}")
+                    # Fall through to retry logic
 
             elif result.status_code == 429: # Too Many Requests
-                logger.warning(f"Explicit rate limit (429) for alpha {alpha_id} (Attempt {attempt + 1}).")
+                logger.warning(f"Explicit rate limit (429) for alpha {alpha_id} (Attempt {attempt}).")
                 # Fall through to retry logic with backoff
             elif 500 <= result.status_code < 600: # Server-side errors
-                logger.warning(f"Server error ({result.status_code}) for alpha {alpha_id} (Attempt {attempt + 1}). Response: {result.text[:200]}")
+                logger.warning(f"Server error ({result.status_code}) for alpha {alpha_id} (Attempt {attempt}). Response: {result.text[:200]}")
                 # Fall through to retry logic with backoff
             else: # Other client errors or unexpected status codes
-                logger.error(f"Failed to fetch PNL for alpha {alpha_id}. Status: {result.status_code}, Response: {result.text[:200]} (Attempt {attempt + 1})")
+                logger.error(f"Failed to fetch PNL for alpha {alpha_id}. Status: {result.status_code}, Response: {result.text[:200]} (Attempt {attempt})")
                 if 400 <= result.status_code < 500 and result.status_code != 429: # Non-retryable client errors
                     logger.error(f"Client error {result.status_code} for alpha {alpha_id}. Not retrying.")
                     return pd.DataFrame()
-                # For other errors, fall through to retry logic if not last attempt
+                # For other errors, fall through to retry logic
 
             # Retry logic for errors not handled by 'Retry-After' or specific status checks above
-            if attempt < max_retries - 1:
-                wait_duration = default_retry_seconds * (attempt + 1) # Exponential backoff
-                logger.info(f"Retrying PNL fetch for alpha {alpha_id} in {wait_duration}s...")
-                time.sleep(wait_duration)
-            else:
-                logger.error(f"All {max_retries} retries failed for alpha {alpha_id}. Final status: {result.status_code if 'result' in locals() else 'N/A'}")
-                return pd.DataFrame()
+            # Use exponential backoff with cap
+            wait_duration = min(default_retry_seconds * min(attempt, 8), max_backoff_seconds) # Cap at max_backoff_seconds
+            logger.info(f"Retrying PNL fetch for alpha {alpha_id} in {wait_duration}s (Attempt {attempt})...")
+            time.sleep(wait_duration)
 
         except requests.exceptions.Timeout:
-            logger.warning(f"Request timed out fetching PNL for alpha {alpha_id} (Attempt {attempt + 1})")
-            if attempt < max_retries - 1:
-                time.sleep(default_retry_seconds * (attempt + 1))
-            else:
-                logger.error(f"All {max_retries} retries failed due to timeout for alpha {alpha_id}.")
-                return pd.DataFrame()
+            logger.warning(f"Request timed out fetching PNL for alpha {alpha_id} (Attempt {attempt})")
+            wait_duration = min(default_retry_seconds * min(attempt, 8), max_backoff_seconds)
+            logger.info(f"Retrying after timeout for alpha {alpha_id} in {wait_duration}s...")
+            time.sleep(wait_duration)
         except requests.exceptions.RequestException as re:
-            logger.error(f"Request exception fetching PNL for alpha {alpha_id} (Attempt {attempt + 1}): {re}")
-            if attempt < max_retries - 1:
-                # For general request exceptions, use a moderate backoff
-                time.sleep(default_retry_seconds * (attempt + 1))
-            else:
-                logger.error(f"All {max_retries} retries failed due to request exceptions for alpha {alpha_id}.")
-                return pd.DataFrame()
-
-            # Should not be reached if loop logic is correct, but as a fallback:
-            logger.error(f"Failed to fetch PNL for alpha {alpha_id} after all attempts and error handling.")
-            return pd.DataFrame()
+            logger.error(f"Request exception fetching PNL for alpha {alpha_id} (Attempt {attempt}): {re}")
+            # For general request exceptions, use moderate backoff with cap
+            wait_duration = min(default_retry_seconds * min(attempt, 8), max_backoff_seconds)
+            logger.info(f"Retrying after request exception for alpha {alpha_id} in {wait_duration}s...")
+            time.sleep(wait_duration)
 
 
 def get_alpha_pnl_threaded(session: requests.Session, alpha_ids: List[str], max_workers: int = 200) -> Tuple[pd.DataFrame, List[str]]:
@@ -634,7 +626,7 @@ def get_alpha_pnl_threaded(session: requests.Session, alpha_ids: List[str], max_
             for future in as_completed(futures):
                 try:
                     # Add timeout to make it interruptible and handle KeyboardInterrupt
-                    alpha_id, pnl_df = future.result(timeout=30)
+                    alpha_id, pnl_df = future.result(timeout=60)
                     results[alpha_id] = pnl_df
                     # Log success with record count
                     if not pnl_df.empty:

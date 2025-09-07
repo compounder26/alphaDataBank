@@ -24,21 +24,66 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
+import numpy as np
 
 # Import analysis modules
 from analysis.analysis_operations import AnalysisOperations
 from database.schema import initialize_analysis_database, get_connection
 from sqlalchemy import text
+import scipy.cluster.hierarchy as sch
+from scipy.spatial.distance import squareform
+import networkx as nx
+
+# Import advanced clustering methods
+try:
+    from analysis.clustering.advanced_clustering import (
+        calculate_rolling_correlation_matrix,
+        hierarchical_risk_parity_clustering,
+        calculate_advanced_risk_metrics,
+        create_minimum_spanning_tree,
+        find_optimal_clusters
+    )
+    ADVANCED_CLUSTERING_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Advanced clustering methods not available: {e}")
+    ADVANCED_CLUSTERING_AVAILABLE = False
 
 # Default styling
 TEMPLATE = 'plotly_white'
 
 # Analysis configuration  
-OPERATORS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'operators.txt')
-DATAFIELDS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'all_datafields_comprehensive.csv')
+# Default file paths - now point to dynamic files, can be overridden by command line arguments
+DEFAULT_OPERATORS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data', 'operators_dynamic.json')
+
+# These will be set by command line arguments or use defaults
+OPERATORS_FILE = DEFAULT_OPERATORS_FILE
+
+# Global operators list for dynamic operators
+DYNAMIC_OPERATORS_LIST = None
+_analysis_ops_instance = None
+
+def create_analysis_operations() -> AnalysisOperations:
+    """
+    Create or return singleton AnalysisOperations instance with current global settings.
+    This prevents creating multiple instances and reduces connection overhead.
+    """
+    global _analysis_ops_instance
+    if _analysis_ops_instance is None:
+        _analysis_ops_instance = AnalysisOperations(OPERATORS_FILE, DYNAMIC_OPERATORS_LIST)
+        print("Created singleton AnalysisOperations instance for better performance")
+    return _analysis_ops_instance
+
+def reset_analysis_operations():
+    """Reset the singleton instance (useful for testing or config changes)."""
+    global _analysis_ops_instance
+    _analysis_ops_instance = None
 
 def get_alpha_details_for_clustering(alpha_ids: List[str]) -> Dict[str, Dict]:
     """Fetch alpha details for clustering hover information."""
+    # Return empty dict if no alpha IDs provided
+    if not alpha_ids:
+        return {}
+    
     try:
         db_engine = get_connection()
         with db_engine.connect() as connection:
@@ -130,20 +175,28 @@ def load_all_region_data() -> Dict[str, Any]:
     print(f"Successfully loaded clustering data for {len(all_region_data)} regions")
     return all_region_data
 
-def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash:
+def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_list: Optional[List[str]] = None) -> dash.Dash:
     """
     Create a Dash app for visualizing the clustering data.
     
     Args:
         data: Dictionary with clustering data
+        operators_list: Optional list of operators to use (overrides operators file)
         
     Returns:
         Dash app
     """
     # Initialize analysis operations
+    # Reset singleton to ensure fresh instance with correct data
+    reset_analysis_operations()
+    
     analysis_ops = None
     try:
-        analysis_ops = AnalysisOperations(OPERATORS_FILE, DATAFIELDS_FILE)
+        analysis_ops = AnalysisOperations(OPERATORS_FILE, operators_list)
+        if operators_list:
+            print(f"✅ Analysis operations initialized with {len(operators_list)} dynamic operators")
+        else:
+            print("📁 Analysis operations initialized with static operators file")
     except Exception as e:
         print(f"Warning: Could not initialize analysis operations: {e}")
     
@@ -168,6 +221,62 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
     
     # Set app title  
     app.title = "Alpha Analysis Dashboard"
+    
+    # Add custom CSS for hover effects
+    app.index_string = '''
+    <!DOCTYPE html>
+    <html>
+        <head>
+            {%metas%}
+            <title>{%title%}</title>
+            {%favicon%}
+            {%css%}
+            <style>
+                /* Custom styles for clickable badges */
+                .datafield-clickable-badge:hover {
+                    transform: scale(1.1);
+                    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+                    filter: brightness(1.1);
+                }
+                
+                /* Pulsing animation for badges with multiple IDs */
+                @keyframes pulse {
+                    0% { box-shadow: 0 0 0 0 rgba(13, 110, 253, 0.7); }
+                    70% { box-shadow: 0 0 0 10px rgba(13, 110, 253, 0); }
+                    100% { box-shadow: 0 0 0 0 rgba(13, 110, 253, 0); }
+                }
+                
+                .badge[title*="available datafields"] {
+                    animation: pulse 2s infinite;
+                }
+                
+                /* Improve table readability */
+                .table-hover tbody tr:hover {
+                    background-color: rgba(0,123,255,0.05);
+                }
+                
+                /* Modal improvements */
+                .modal-body .card {
+                    border-left: 4px solid #007bff;
+                    transition: transform 0.2s;
+                }
+                
+                .modal-body .card:hover {
+                    transform: translateX(5px);
+                    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+                }
+            </style>
+        </head>
+        <body>
+            {%app_entry%}
+            <footer>
+                {%config%}
+                {%scripts%}
+                {%renderer%}
+            </footer>
+        </body>
+    </html>
+    '''
     
     # Create layout with tabs
     app.layout = dbc.Container([
@@ -208,16 +317,29 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         dcc.Store(id='available-regions', data=available_regions),
         dcc.Store(id='selected-clustering-region', data=available_regions[0] if available_regions else None),
         # Current region data (will be updated when region is selected)
-        dcc.Store(id='current-mds-data', data=[]),
+        dcc.Store(id='current-mds-data', data=[]),  # For backward compatibility
+        dcc.Store(id='mds-data-simple', data=[]),
+        dcc.Store(id='mds-data-euclidean', data=[]),
+        dcc.Store(id='mds-data-angular', data=[]),
         dcc.Store(id='current-tsne-data', data=[]),
         dcc.Store(id='current-umap-data', data=[]),
         dcc.Store(id='current-pca-data', data=[]),
+        dcc.Store(id='current-pca-info', data={}),
         dcc.Store(id='current-metadata', data=[]),
+        # Pre-calculated heatmap data for all distance metrics
+        dcc.Store(id='heatmap-data-simple', data={}),
+        dcc.Store(id='heatmap-data-euclidean', data={}),
+        dcc.Store(id='heatmap-data-angular', data={}),
         dcc.Store(id='selected-alpha', data=None),
         dcc.Store(id='analysis-ops', data={'available': analysis_ops is not None}),
         # Store for view states and expanded lists
         dcc.Store(id='operators-view-mode', data='top20'),  # 'top20', 'all', 'usage-analysis'
         dcc.Store(id='datafields-view-mode', data='top20'),  # 'top20', 'all'
+        # Store for highlighting feature
+        dcc.Store(id='operator-highlighted-alphas', data=[]),
+        dcc.Store(id='datafield-highlighted-alphas', data=[]),
+        dcc.Store(id='available-operators', data=[]),
+        dcc.Store(id='available-datafields', data=[]),
         
         # Modal components for interactive features
         dbc.Modal([
@@ -252,8 +374,7 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
                     html.H4("Analysis Unavailable", className="alert-heading"),
                     html.P("The analysis system could not be initialized. Please check:"),
                     html.Ul([
-                        html.Li("operators.txt file exists in project root"),
-                        html.Li("all_datafields_comprehensive.csv file exists in project root"),
+                        html.Li("Dynamic operators/datafields data is available (run with --renew if needed)"),
                         html.Li("Database connection is working"),
                         html.Li("Analysis schema is initialized")
                     ])
@@ -377,13 +498,60 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
                                 {'label': 't-SNE on Performance Features', 'value': 'tsne'},
                                 {'label': 'UMAP on Performance Features', 'value': 'umap'},
                                 {'label': 'PCA on Performance Features', 'value': 'pca'},
+                                {'label': 'Correlation Heatmap', 'value': 'heatmap', 'disabled': not ADVANCED_CLUSTERING_AVAILABLE},
                             ],
                             value='mds',
-                            inline=True,
+                            inline=False,
                             className="mb-3"
                         ),
+                        html.Hr() if ADVANCED_CLUSTERING_AVAILABLE else html.Div(),
+                        html.Div([
+                            html.Label("Distance Metric:", className="form-label"),
+                            dcc.RadioItems(
+                                id='distance-metric',
+                                options=[
+                                    {'label': 'Simple (1 - corr)', 'value': 'simple'},
+                                    {'label': 'Euclidean √(2(1-corr))', 'value': 'euclidean'},
+                                    {'label': 'Angular √(0.5(1-corr))', 'value': 'angular'},
+                                ],
+                                value='euclidean',
+                                className="mb-2"
+                            ),
+                        ], id='distance-metric-container', style={'display': 'block' if ADVANCED_CLUSTERING_AVAILABLE else 'none'}),
                     ])
                 ], className="mb-4"),
+                
+                # Alpha Highlighting Card (NEW)
+                dbc.Card([
+                    dbc.CardHeader("Alpha Highlighting"),
+                    dbc.CardBody([
+                        # Operator highlighting section
+                        html.Div([
+                            html.Label("Highlight alphas using operators:", className="form-label"),
+                            dcc.Dropdown(
+                                id='operator-highlight-selector',
+                                placeholder="Select operators to highlight...",
+                                multi=True,
+                                searchable=True
+                            ),
+                        ], className="mb-3"),
+                        
+                        # Datafield highlighting section  
+                        html.Div([
+                            html.Label("Highlight alphas using datafields:", className="form-label"),
+                            dcc.Dropdown(
+                                id='datafield-highlight-selector',
+                                placeholder="Select datafields to highlight...",
+                                multi=True,
+                                searchable=True
+                            ),
+                        ], className="mb-3"),
+                        
+                        # Clear highlights button
+                        dbc.Button("Clear Highlights", id="clear-highlights-btn", 
+                                  color="outline-secondary", size="sm")
+                    ])
+                ], className="mb-3"),
                 
                 dbc.Card([
                     dbc.CardHeader("Alpha Details"),
@@ -394,6 +562,14 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
             ], width=3),
             
             dbc.Col([
+                # Method Explanation Card (NEW)
+                dbc.Card([
+                    dbc.CardHeader("Method Explanation", className="bg-info text-white"),
+                    dbc.CardBody([
+                        html.Div(id='method-explanation', className="mb-3")
+                    ])
+                ], className="mb-3"),
+                
                 dbc.Card([
                     dbc.CardHeader("Clustering Visualization"),
                     dbc.CardBody([
@@ -404,7 +580,21 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
                             children=[dcc.Graph(id='clustering-plot', style={'height': '85vh'})]
                         )
                     ])
-                ])
+                ]),
+                
+                # PCA Feature Loadings Heatmap (shown only when PCA is selected)
+                html.Div(id='pca-loadings-container', children=[
+                    dbc.Card([
+                        dbc.CardHeader("PCA Feature Loadings", className="bg-secondary text-white"),
+                        dbc.CardBody([
+                            dcc.Loading(
+                                id="loading-pca-heatmap",
+                                type="default",
+                                children=[dcc.Graph(id='pca-loadings-heatmap', style={'height': '400px'})]
+                            )
+                        ])
+                    ], className="mt-3")
+                ], style={'display': 'none'})
             ], width=9)
         ])
     
@@ -420,7 +610,7 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         
         try:
             # Preload all analysis data without filters for faster access
-            temp_analysis_ops = AnalysisOperations(OPERATORS_FILE, DATAFIELDS_FILE)
+            temp_analysis_ops = create_analysis_operations()
             results = temp_analysis_ops.get_analysis_summary()
             return results
         except Exception as e:
@@ -478,40 +668,212 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
     # Callback to update clustering data when region is selected
     @app.callback(
         [Output('current-mds-data', 'data'),
+         Output('mds-data-simple', 'data'),
+         Output('mds-data-euclidean', 'data'),
+         Output('mds-data-angular', 'data'),
          Output('current-tsne-data', 'data'),
          Output('current-umap-data', 'data'),
          Output('current-pca-data', 'data'),
+         Output('current-pca-info', 'data'),
          Output('current-metadata', 'data'),
+         Output('heatmap-data-simple', 'data'),
+         Output('heatmap-data-euclidean', 'data'),
+         Output('heatmap-data-angular', 'data'),
          Output('clustering-region-info', 'children')],
         Input('clustering-region-selector', 'value'),
         State('all-region-data', 'data')
     )
     def update_clustering_data_for_region(selected_region, all_region_data):
         if not selected_region or not all_region_data or selected_region not in all_region_data:
-            return [], [], [], [], [], "No data available"
+            return [], [], [], [], [], [], [], {}, {}, {}, {}, {}, "No data available"
         
         region_data = all_region_data[selected_region]
         
+        # Load pre-calculated MDS data for all distance metrics
+        mds_simple = pd.DataFrame.from_dict(region_data.get('mds_coords_simple', {}), orient='index')
+        mds_euclidean = pd.DataFrame.from_dict(region_data.get('mds_coords_euclidean', region_data.get('mds_coords', {})), orient='index')
+        mds_angular = pd.DataFrame.from_dict(region_data.get('mds_coords_angular', {}), orient='index')
+        
         # Convert coordinate dictionaries to DataFrames
-        mds_coords = pd.DataFrame.from_dict(region_data.get('mds_coords', {}), orient='index')
         tsne_coords = pd.DataFrame.from_dict(region_data.get('tsne_coords', {}), orient='index')
         umap_coords = pd.DataFrame.from_dict(region_data.get('umap_coords', {}), orient='index')
         pca_coords = pd.DataFrame.from_dict(region_data.get('pca_coords', {}), orient='index')
+        pca_info = region_data.get('pca_info', {})  # Load PCA analysis information
         metadata = pd.DataFrame.from_dict(region_data.get('alpha_metadata', {}), orient='index')
         
         # Convert to dict format for storage
-        mds_data = mds_coords.reset_index().to_dict('records') if not mds_coords.empty else []
+        mds_data_simple = mds_simple.reset_index().to_dict('records') if not mds_simple.empty else []
+        mds_data_euclidean = mds_euclidean.reset_index().to_dict('records') if not mds_euclidean.empty else []
+        mds_data_angular = mds_angular.reset_index().to_dict('records') if not mds_angular.empty else []
+        
+        # Default MDS is euclidean for backward compatibility
+        mds_data_current = mds_data_euclidean
+        
         tsne_data = tsne_coords.reset_index().to_dict('records') if not tsne_coords.empty else []
         umap_data = umap_coords.reset_index().to_dict('records') if not umap_coords.empty else []
         pca_data = pca_coords.reset_index().to_dict('records') if not pca_coords.empty else []
         metadata_data = metadata.reset_index().to_dict('records') if not metadata.empty else []
+        
+        # Load pre-calculated heatmap data for all distance metrics
+        heatmap_simple = region_data.get('heatmap_data_simple', {})
+        heatmap_euclidean = region_data.get('heatmap_data_euclidean', {})
+        heatmap_angular = region_data.get('heatmap_data_angular', {})
         
         # Create info text
         alpha_count = region_data.get('alpha_count', 0)
         timestamp = region_data.get('timestamp', 'Unknown')
         info_text = f"{alpha_count} alphas | Generated: {timestamp}"
         
-        return mds_data, tsne_data, umap_data, pca_data, metadata_data, info_text
+        return (mds_data_current, mds_data_simple, mds_data_euclidean, mds_data_angular,
+                tsne_data, umap_data, pca_data, pca_info, metadata_data,
+                heatmap_simple, heatmap_euclidean, heatmap_angular,
+                info_text)
+    
+    # Callback to update selected clustering region
+    @app.callback(
+        Output('selected-clustering-region', 'data'),
+        Input('clustering-region-selector', 'value')
+    )
+    def update_selected_clustering_region(selected_region):
+        """Update the selected clustering region store."""
+        return selected_region
+    
+    # Callback to show/hide distance metric selector based on visualization method
+    @app.callback(
+        Output('distance-metric-container', 'style'),
+        Input('method-selector', 'value'),
+        prevent_initial_call=True
+    )
+    def toggle_distance_metric_visibility(method):
+        """Show distance metric selector only for MDS visualization."""
+        if ADVANCED_CLUSTERING_AVAILABLE and method == 'mds':
+            return {'margin-bottom': '15px', 'display': 'block'}
+        else:
+            return {'display': 'none'}
+    
+    # Callback to show/hide PCA loadings heatmap based on visualization method
+    @app.callback(
+        Output('pca-loadings-container', 'style'),
+        Input('method-selector', 'value'),
+        prevent_initial_call=True
+    )
+    def toggle_pca_loadings_visibility(method):
+        """Show PCA loadings heatmap only when PCA method is selected."""
+        if method == 'pca':
+            return {'display': 'block'}
+        else:
+            return {'display': 'none'}
+    
+    # Callback to update MDS data based on selected distance metric
+    @app.callback(
+        Output('current-mds-data', 'data', allow_duplicate=True),
+        [Input('distance-metric', 'value'),
+         State('mds-data-simple', 'data'),
+         State('mds-data-euclidean', 'data'),
+         State('mds-data-angular', 'data')],
+        prevent_initial_call=True
+    )
+    def update_mds_with_distance_metric(distance_metric, mds_simple, mds_euclidean, mds_angular):
+        """Update MDS data based on the selected distance metric using pre-calculated data."""
+        if not distance_metric:
+            return []
+        
+        # Select the appropriate pre-calculated MDS data
+        if distance_metric == 'simple':
+            return mds_simple
+        elif distance_metric == 'angular':
+            return mds_angular
+        else:  # euclidean is default
+            return mds_euclidean
+    
+    # Callback to populate highlighting dropdown options when region changes
+    @app.callback(
+        [Output('available-operators', 'data'),
+         Output('available-datafields', 'data'),
+         Output('operator-highlight-selector', 'options'),
+         Output('datafield-highlight-selector', 'options')],
+        Input('selected-clustering-region', 'data')
+    )
+    def update_highlight_options(selected_region):
+        """Update available operators and datafields for highlighting based on selected region."""
+        if not selected_region:
+            return [], [], [], []
+        
+        try:
+            # Get analysis operations instance
+            analysis_ops = create_analysis_operations()
+            
+            # Get available operators and datafields for the region
+            operators = analysis_ops.get_available_operators_for_region(selected_region)
+            datafields = analysis_ops.get_available_datafields_for_region(selected_region)
+            
+            # Format options for dropdowns
+            operator_options = [{'label': op, 'value': op} for op in operators]
+            datafield_options = [{'label': df, 'value': df} for df in datafields]
+            
+            return operators, datafields, operator_options, datafield_options
+            
+        except Exception as e:
+            print(f"Error updating highlight options: {e}")
+            return [], [], [], []
+    
+    # Callback to track operator selections and find matching alphas
+    @app.callback(
+        Output('operator-highlighted-alphas', 'data'),
+        Input('operator-highlight-selector', 'value'),
+        State('selected-clustering-region', 'data')
+    )
+    def update_operator_highlights(selected_operators, region):
+        """Update list of alphas highlighted by operator selection."""
+        if not selected_operators or not region:
+            return []
+        
+        try:
+            # Get analysis operations instance
+            analysis_ops = create_analysis_operations()
+            
+            # Get alphas containing selected operators
+            alpha_ids = analysis_ops.get_alphas_containing_operators(selected_operators, region)
+            return alpha_ids
+            
+        except Exception as e:
+            print(f"Error updating operator highlights: {e}")
+            return []
+    
+    # Callback to track datafield selections and find matching alphas
+    @app.callback(
+        Output('datafield-highlighted-alphas', 'data'),
+        Input('datafield-highlight-selector', 'value'),
+        State('selected-clustering-region', 'data')
+    )
+    def update_datafield_highlights(selected_datafields, region):
+        """Update list of alphas highlighted by datafield selection."""
+        if not selected_datafields or not region:
+            return []
+        
+        try:
+            # Get analysis operations instance
+            analysis_ops = create_analysis_operations()
+            
+            # Get alphas containing selected datafields
+            alpha_ids = analysis_ops.get_alphas_containing_datafields(selected_datafields, region)
+            return alpha_ids
+            
+        except Exception as e:
+            print(f"Error updating datafield highlights: {e}")
+            return []
+    
+    # Callback to clear highlights
+    @app.callback(
+        [Output('operator-highlight-selector', 'value'),
+         Output('datafield-highlight-selector', 'value')],
+        Input('clear-highlights-btn', 'n_clicks')
+    )
+    def clear_highlights(n_clicks):
+        """Clear both operator and datafield highlights."""
+        if n_clicks:
+            return [], []
+        return dash.no_update, dash.no_update
     
     @app.callback(
         [Output('analysis-data', 'data'),
@@ -536,7 +898,7 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
                 results = preloaded_data
             else:
                 # Get filtered analysis results
-                temp_analysis_ops = AnalysisOperations(OPERATORS_FILE, DATAFIELDS_FILE)
+                temp_analysis_ops = create_analysis_operations()
                 results = temp_analysis_ops.get_analysis_summary(region, universe, delay, date_from, date_to)
             
             # Create summary
@@ -637,10 +999,44 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         
         # Load all platform operators
         try:
-            with open(OPERATORS_FILE, 'r') as f:
-                all_operators = [op.strip() for op in f.read().split(',')]
-        except:
-            return html.Div("Error loading operators file", className="text-danger")
+            # Use already-parsed operators list if available (more efficient)
+            if DYNAMIC_OPERATORS_LIST:
+                all_operators = DYNAMIC_OPERATORS_LIST
+                print(f"✅ Using cached operators list: {len(all_operators)} operators")
+            else:
+                # Handle different file formats properly
+                operators_file_clean = OPERATORS_FILE.strip().lower()
+                if operators_file_clean.endswith('.json'):
+                    # Handle JSON format (like operators_dynamic.json)
+                    import json
+                    with open(OPERATORS_FILE, 'r') as f:
+                        data = json.load(f)
+                    
+                    if isinstance(data, dict) and 'operators' in data:
+                        # Extract operator names from API response format
+                        all_operators = [op['name'] for op in data['operators']]
+                        print(f"✅ Loaded {len(all_operators)} operators from JSON file")
+                    elif isinstance(data, list):
+                        # Direct list of operator names
+                        all_operators = data
+                        print(f"✅ Loaded {len(all_operators)} operators from JSON list")
+                    else:
+                        raise ValueError(f"Unsupported JSON format in {OPERATORS_FILE}")
+                else:
+                    # Handle traditional TXT format
+                    with open(OPERATORS_FILE, 'r') as f:
+                        all_operators = [op.strip() for op in f.read().split(',')]
+                    print(f"✅ Loaded {len(all_operators)} operators from TXT file")
+                
+                # Validate operator count to catch parsing errors
+                if len(all_operators) > 1000:
+                    print(f"⚠️ Warning: Suspicious operator count: {len(all_operators)} - possible parsing error")
+                    # Show sample to help debug
+                    sample_ops = all_operators[:10]
+                    print(f"Sample operators: {sample_ops}")
+        except Exception as e:
+            print(f"❌ Error loading operators: {e}")
+            return html.Div(f"Error loading operators file: {str(e)}", className="text-danger")
         
         # Categorize operators
         frequently_used = [(op, count) for op, count in used_operators.items() if count >= 10]
@@ -929,7 +1325,7 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         # Calculate dataset usage counts
         dataset_counts = {}
         try:
-            temp_analysis_ops = AnalysisOperations(OPERATORS_FILE, DATAFIELDS_FILE)
+            temp_analysis_ops = create_analysis_operations()
             print(f"Processing {len(unique_usage)} datafields for dataset analysis")
             
             for df, alphas in unique_usage.items():
@@ -1021,7 +1417,7 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         
         # Calculate category and dataset counts
         try:
-            temp_analysis_ops = AnalysisOperations(OPERATORS_FILE, DATAFIELDS_FILE)
+            temp_analysis_ops = create_analysis_operations()
             unique_usage = datafields_data.get('unique_usage', {})
             print(f"Processing {len(unique_usage)} datafields for dataset/category analysis")
             
@@ -1136,6 +1532,13 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         total_alphas = metadata.get('total_alphas', 0)
         avg_dfs_per_alpha = total_nominal / total_alphas if total_alphas > 0 else 0
         
+        # Get region-specific count from analysis data (actual usage by alphas)
+        total_region_specific_dfs = datafields_data.get('region_specific_count', 0)
+        
+        # If region_specific_count is not available (old analysis data), fallback to unique count
+        if total_region_specific_dfs == 0:
+            total_region_specific_dfs = total_unique_dfs
+        
         
         # Create plot containers
         plot_containers = [
@@ -1161,6 +1564,12 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
                         dbc.ListGroupItem([
                             html.Strong(f"Total Unique Datafields: "),
                             html.Span(f"{total_unique_dfs}", className="badge bg-primary ms-2")
+                        ]),
+                        dbc.ListGroupItem([
+                            html.Strong(f"Total Region-Specific Datafields: "),
+                            html.Span(f"{total_region_specific_dfs:,}", className="badge bg-secondary ms-2"),
+                            html.Br(),
+                            html.Small("(unique datafield-region-delay combinations)", className="text-muted")
                         ]),
                         dbc.ListGroupItem([
                             html.Strong(f"Total Datafield Instances: "),
@@ -1267,20 +1676,65 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         return main_content
     
     def create_cross_analysis_content(analysis_data):
-        """Create cross-analysis content."""
+        """Create cross-analysis content with datafield recommendations."""
         return dbc.Row([
             dbc.Col([
-                html.H4("Cross-Analysis Dashboard"),
-                html.P("Coming soon: Correlation between operator and datafield usage patterns."),
-                dbc.Alert([
-                    html.H6("Available Features:", className="alert-heading"),
-                    html.Ul([
-                        html.Li("Operator-Datafield co-occurrence matrix"),
-                        html.Li("Alpha complexity analysis"),
-                        html.Li("Strategy pattern identification"),
-                        html.Li("Performance correlation with expression complexity")
+                html.H4("Datafield Recommendations", className="mb-3"),
+                html.P("Discover datafields used in your submitted alphas and identify regions where they could be expanded.", 
+                       className="text-muted mb-4"),
+                
+                # Filters section
+                dbc.Card([
+                    dbc.CardHeader("Filters"),
+                    dbc.CardBody([
+                        dbc.Row([
+                            dbc.Col([
+                                html.Label("Target Region:", className="form-label"),
+                                dcc.Dropdown(
+                                    id='recommendation-region-filter',
+                                    options=[{'label': 'All Regions', 'value': 'all'}] + 
+                                            [{'label': region, 'value': region} for region in 
+                                             ['USA', 'EUR', 'JPN', 'CHN', 'AMR', 'ASI', 'GLB', 'HKG', 'KOR', 'TWN']],
+                                    value='all',
+                                    clearable=False,
+                                    placeholder="Select target region..."
+                                )
+                            ], md=4),
+                            dbc.Col([
+                                html.Label("Datafield Type:", className="form-label"),
+                                dcc.Dropdown(
+                                    id='recommendation-type-filter',
+                                    options=[
+                                        {'label': 'All Types', 'value': 'all'},
+                                        {'label': 'Matrix', 'value': 'MATRIX'},
+                                        {'label': 'Vector', 'value': 'VECTOR'},
+                                        {'label': 'Group', 'value': 'GROUP'}
+                                    ],
+                                    value='all',
+                                    clearable=False,
+                                    placeholder="Select datafield type..."
+                                )
+                            ], md=4),
+                            dbc.Col([
+                                dbc.Button(
+                                    "Refresh Recommendations",
+                                    id="refresh-recommendations-btn",
+                                    color="primary",
+                                    className="mt-4"
+                                )
+                            ], md=4)
+                        ])
                     ])
-                ], color="info")
+                ], className="mb-4"),
+                
+                # Loading indicator and recommendations content
+                dcc.Loading(
+                    id="loading-recommendations",
+                    type="default",
+                    children=[
+                        html.Div(id='recommendations-content')
+                    ]
+                )
             ])
         ])
     
@@ -1532,7 +1986,117 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
     
     
 
-    # Clustering callback (updated for multi-region support)
+    # Callback to update method explanation
+    @app.callback(
+        Output('method-explanation', 'children'),
+        Input('method-selector', 'value')
+    )
+    def update_method_explanation(method):
+        """Provide mathematical explanation for the selected clustering method."""
+        
+        explanations = {
+            'mds': [
+                html.H5("📊 Multidimensional Scaling (MDS) on Correlation Matrix", className="text-primary"),
+                html.P([
+                    html.B("What it shows: "),
+                    "Maps alphas to 2D space where distance represents correlation dissimilarity. ",
+                    "Uses the corrected formula d_ij = √(2(1 - ρ_ij)) where ρ is the correlation of percentage returns."
+                ]),
+                html.P([
+                    html.B("Why useful: "),
+                    "Alphas close together are highly correlated (avoid combining), while distant alphas are uncorrelated (good for diversification). ",
+                    "The Euclidean distance in the plot directly corresponds to portfolio diversification benefit."
+                ]),
+                html.P([
+                    html.B("Mathematics: "),
+                    "Minimizes stress function S = Σ_ij (d_ij - δ_ij)² where d_ij is the 2D distance and δ_ij is the original correlation distance. "
+                ], className="small text-muted"),
+            ],
+            
+            'tsne': [
+                html.H5("🔬 t-SNE on Performance Features", className="text-primary"),
+                html.P([
+                    html.B("What it shows: "),
+                    "Non-linear projection emphasizing local structure - alphas with similar risk-return profiles cluster together. ",
+                    "Uses Sharpe ratio, volatility, drawdown, skewness, and kurtosis as features."
+                ]),
+                html.P([
+                    html.B("Why useful: "),
+                    "Reveals natural groupings of strategies with similar behavior patterns. ",
+                    "Tight clusters indicate redundant strategies; isolated points represent unique approaches worth including."
+                ]),
+                html.P([
+                    html.B("Mathematics: "),
+                    "Minimizes KL divergence between probability distributions: KL(P||Q) = Σ_ij p_ij log(p_ij/q_ij). ",
+                    "Uses Student's t-distribution in embedding space for heavy-tailed flexibility."
+                ], className="small text-muted"),
+            ],
+            
+            'umap': [
+                html.H5("🗺️ UMAP on Performance Features", className="text-primary"),
+                html.P([
+                    html.B("What it shows: "),
+                    "Preserves both local and global structure - maintains meaningful distances between clusters. ",
+                    "Superior to t-SNE for understanding relationships between different strategy groups."
+                ]),
+                html.P([
+                    html.B("Why useful: "),
+                    "Inter-cluster distances are meaningful - can identify which strategy groups are most different. ",
+                    "Useful for hierarchical portfolio construction across multiple strategy types."
+                ]),
+                html.P([
+                    html.B("Mathematics: "),
+                    "Constructs fuzzy topological representation using k-NN graph, then optimizes layout via cross-entropy. ",
+                    "Balances local structure preservation (n_neighbors) with global structure (min_dist parameter)."
+                ], className="small text-muted"),
+            ],
+            
+            'pca': [
+                html.H5("📐 PCA on Performance Features", className="text-primary"),
+                html.P([
+                    html.B("What it shows: "),
+                    "Linear projection onto principal components - PC1 typically captures risk-return trade-off, PC2 captures style factors. ",
+                    "Preserves global structure and relative distances between all alphas."
+                ]),
+                html.Div(id="pca-dynamic-info", className="mb-3"),  # Dynamic PCA information will be inserted here
+                html.P([
+                    html.B("Why useful: "),
+                    "Interpretable axes - can understand what drives separation between strategies. ",
+                    "Linear nature means portfolio combinations behave predictably in this space."
+                ]),
+                html.P([
+                    html.B("Mathematics: "),
+                    "Eigendecomposition of covariance matrix: Σ = VΛV^T where columns of V are principal components. ",
+                    "Projects data onto eigenvectors with largest eigenvalues to maximize variance."
+                ], className="small text-muted"),
+            ],
+            
+            'heatmap': [
+                html.H5("Correlation Heatmap", className="text-primary"),
+                html.P([
+                    html.B("What it shows: "),
+                    "Full N×N correlation matrix with hierarchical clustering reordering. ",
+                    "Red = positive correlation (redundant), Blue = negative (natural hedges), White = uncorrelated."
+                ]),
+                html.P([
+                    html.B("Why useful: "),
+                    "Direct view of all pairwise relationships - identify blocks of similar strategies. ",
+                    "Diagonal blocks reveal strategy families; off-diagonal patterns show cross-dependencies."
+                ]),
+                html.P([
+                    html.B("Mathematics: "),
+                    "Pearson correlation of percentage returns: ρ = Cov(r_i, r_j) / (σ_i × σ_j). ",
+                ], className="small text-muted"),
+            ],
+        }
+        
+        explanation = explanations.get(method, [html.P("Select a visualization method to see its explanation.")])
+        
+        return html.Div([
+            *explanation
+        ])
+    
+    # Clustering callback (updated for multi-region support and advanced methods)
     @app.callback(
         Output('clustering-plot', 'figure'),
         Input('method-selector', 'value'),
@@ -1540,29 +2104,133 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         Input('current-tsne-data', 'data'),
         Input('current-umap-data', 'data'),
         Input('current-pca-data', 'data'),
-        Input('selected-alpha', 'data')
+        State('current-pca-info', 'data'),
+        Input('selected-alpha', 'data'),
+        Input('all-region-data', 'data'),
+        Input('selected-clustering-region', 'data'),
+        Input('operator-highlighted-alphas', 'data'),
+        Input('datafield-highlighted-alphas', 'data'),
+        State('distance-metric', 'value') if ADVANCED_CLUSTERING_AVAILABLE else Input('selected-clustering-region', 'data'),
+        State('heatmap-data-simple', 'data'),
+        State('heatmap-data-euclidean', 'data'),
+        State('heatmap-data-angular', 'data')
     )
-    def update_plot(method, mds_data, tsne_data, umap_data, pca_data, selected_alpha):
+    def update_plot(method, mds_data, tsne_data, umap_data, pca_data, pca_info, selected_alpha, 
+                   all_region_data, selected_region, operator_alphas, datafield_alphas, distance_metric,
+                   heatmap_simple, heatmap_euclidean, heatmap_angular):
+        
+        # Handle advanced clustering methods using pre-calculated data
+        if method == 'heatmap' and ADVANCED_CLUSTERING_AVAILABLE:
+            # Heatmap always uses the same correlation matrix (no distance metric needed)
+            data = heatmap_euclidean  # They're all the same, just use one
+                
+            # Create heatmap from pre-calculated data
+            if data and 'correlation_matrix' in data and 'alpha_ids' in data:
+                fig = go.Figure(data=go.Heatmap(
+                    z=data['correlation_matrix'],
+                    x=data['alpha_ids'],
+                    y=data['alpha_ids'],
+                    colorscale='RdBu',
+                    zmid=0,
+                    text=np.round(data['correlation_matrix'], 2),
+                    texttemplate="%{text}",
+                    textfont={"size": 8},
+                    colorbar=dict(title="Correlation"),
+                    hovertemplate="Alpha X: %{x}<br>Alpha Y: %{y}<br>Correlation: %{z:.3f}<extra></extra>"
+                ))
+                
+                fig.update_layout(
+                    title="Correlation Heatmap",
+                    xaxis=dict(title="Alpha ID", tickangle=45, tickfont=dict(size=8)),
+                    yaxis=dict(title="Alpha ID", tickfont=dict(size=8)),
+                    template=TEMPLATE,
+                    height=800,
+                    width=900,
+                    clickmode='event+select',  # Enable clicking on heatmap cells
+                    hovermode='closest'
+                )
+                return fig
+            
+            # If no data available, show message
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"No pre-calculated {method.upper()} data available.<br>Please regenerate clustering data.",
+                xref="paper", yref="paper", x=0.5, y=0.5,
+                showarrow=False, font=dict(size=16)
+            )
+            fig.update_layout(template=TEMPLATE)
+            return fig
+        
+        # Initialize axis labels (will be overridden for PCA)
+        x_label, y_label = "Dimension 1", "Dimension 2"
+        
         # Select the appropriate data based on the method
         if method == 'mds':
-            plot_data = pd.DataFrame(mds_data)
-            title = "MDS on Correlation Matrix"
+            plot_data = pd.DataFrame(mds_data) if mds_data else pd.DataFrame()
+            distance_label = {'simple': 'Simple', 'euclidean': 'Euclidean', 'angular': 'Angular'}.get(distance_metric, 'Euclidean')
+            title = f"MDS on Correlation Matrix ({distance_label} distance)"
         elif method == 'tsne':
-            plot_data = pd.DataFrame(tsne_data)
+            plot_data = pd.DataFrame(tsne_data) if tsne_data else pd.DataFrame()
             title = "t-SNE on Performance Features"
         elif method == 'umap':
-            plot_data = pd.DataFrame(umap_data)
+            plot_data = pd.DataFrame(umap_data) if umap_data else pd.DataFrame()
             title = "UMAP on Performance Features"
         elif method == 'pca':
-            plot_data = pd.DataFrame(pca_data)
-            title = "PCA on Performance Features"
+            plot_data = pd.DataFrame(pca_data) if pca_data else pd.DataFrame()
+            
+            # Create informative title and labels using PCA info
+            if pca_info and 'variance_explained' in pca_info:
+                var_exp = pca_info['variance_explained']
+                pc1_var = var_exp.get('pc1', 0) * 100  # Convert to percentage
+                pc2_var = var_exp.get('pc2', 0) * 100
+                total_var = var_exp.get('total', 0) * 100
+                title = f"PCA on Performance Features (Total Variance: {total_var:.1f}%)"
+                
+                # Create meaningful axis labels
+                x_label = f"PC1 ({pc1_var:.1f}%)"
+                y_label = f"PC2 ({pc2_var:.1f}%)"
+                
+                # Add interpretation hints to the labels if available
+                if 'interpretation' in pca_info:
+                    interp = pca_info['interpretation']
+                    if interp.get('pc1') and interp['pc1'] != "Mixed factors":
+                        x_label += f": {interp['pc1']}"
+                    if interp.get('pc2') and interp['pc2'] != "Mixed factors":
+                        y_label += f": {interp['pc2']}"
+            else:
+                title = "PCA on Performance Features"
+                x_label = "PC1"
+                y_label = "PC2"
+        else:
+            # Default case if method is not recognized
+            plot_data = pd.DataFrame()
+            title = "Select a clustering method"
+        
+        # Check if plot_data is empty or missing required columns
+        if plot_data.empty or 'x' not in plot_data.columns or 'y' not in plot_data.columns:
+            # Return an empty figure with a message
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"No data available for {method.upper()} clustering.<br>Please wait for data to load or try a different method.",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5,
+                showarrow=False,
+                font=dict(size=16)
+            )
+            fig.update_layout(
+                title=title,
+                template=TEMPLATE,
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False)
+            )
+            return fig
         
         # Fetch alpha details for enhanced hover information
-        if not plot_data.empty:
+        if not plot_data.empty and 'index' in plot_data.columns:
             alpha_ids = plot_data['index'].tolist()
             alpha_details = get_alpha_details_for_clustering(alpha_ids)
             
-            # Create enhanced hover text
+            # Create enhanced hover text with highlighting information
             hover_texts = []
             for alpha_id in alpha_ids:
                 details = alpha_details.get(alpha_id, {})
@@ -1578,8 +2246,17 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
                     if len(formatted_code) > 300:
                         formatted_code = formatted_code[:300] + '...'
                 
+                # Add highlighting information with color indicators
+                match_info = []
+                if operator_alphas and alpha_id in operator_alphas:
+                    match_info.append("● Operator Match")
+                if datafield_alphas and alpha_id in datafield_alphas:
+                    match_info.append("● Datafield Match")
+                
+                match_text = " | ".join(match_info)
+                
                 # Format hover text with better structure
-                hover_text = f"""<b>{alpha_id}</b><br>
+                hover_text = f"""<b>{alpha_id}</b>{' (' + match_text + ')' if match_text else ''}<br>
                 Expression: <br>{formatted_code}<br>
                 <br>
                 Universe: {details.get('universe', 'N/A')}<br>
@@ -1594,19 +2271,114 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         else:
             hover_texts = []
         
-        # Create scatter plot with enhanced hover
-        fig = px.scatter(
-            plot_data, 
-            x='x', 
-            y='y',
-            hover_name='index',  # Use alpha_id as hover name
-            labels={'x': 'Dimension 1', 'y': 'Dimension 2'},
-            template=TEMPLATE
-        )
+        # Check if plot_data is empty or missing required columns
+        if plot_data.empty or 'x' not in plot_data.columns or 'y' not in plot_data.columns:
+            # Return an empty figure with a message
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"No data available for {method.upper()} clustering.<br>Please wait for data to load or try regenerating the clustering data.",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5,
+                showarrow=False,
+                font=dict(size=16)
+            )
+            fig.update_layout(
+                title=title,
+                template=TEMPLATE,
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False)
+            )
+            return fig
         
-        # Update layout
+        # Set axis labels based on method
+        if method == 'pca' and pca_info and 'variance_explained' in pca_info:
+            # x_label and y_label were defined in the PCA section above
+            axis_labels = {'x': x_label, 'y': y_label}
+        else:
+            axis_labels = {'x': 'Dimension 1', 'y': 'Dimension 2'}
+        
+        # Add performance color overlay for PCA method
+        if method == 'pca' and not plot_data.empty and alpha_details:
+            # Try to get performance metrics for color coding
+            performance_values = []
+            performance_metric = None
+            
+            # Try Sharpe ratio first, then returns, then drawdown
+            for metric_name in ['sharpe_ratio', 'fitness', 'returns']:
+                test_values = []
+                for alpha_id in plot_data['index']:
+                    details = alpha_details.get(alpha_id, {})
+                    if metric_name in details and details[metric_name] is not None:
+                        try:
+                            val = float(details[metric_name])
+                            if not np.isnan(val):
+                                test_values.append(val)
+                        except (ValueError, TypeError):
+                            continue
+                
+                if len(test_values) > len(plot_data) * 0.5:  # If we have data for >50% of points
+                    performance_metric = metric_name
+                    # Collect all values, using NaN for missing ones
+                    for alpha_id in plot_data['index']:
+                        details = alpha_details.get(alpha_id, {})
+                        if metric_name in details and details[metric_name] is not None:
+                            try:
+                                val = float(details[metric_name])
+                                performance_values.append(val if not np.isnan(val) else None)
+                            except (ValueError, TypeError):
+                                performance_values.append(None)
+                        else:
+                            performance_values.append(None)
+                    break
+            
+            # Create scatter plot with color if we found a suitable metric
+            if performance_metric and performance_values:
+                plot_data_with_perf = plot_data.copy()
+                plot_data_with_perf['performance'] = performance_values
+                
+                fig = px.scatter(
+                    plot_data_with_perf, 
+                    x='x', 
+                    y='y',
+                    color='performance',
+                    hover_name='index',
+                    labels=axis_labels,
+                    template=TEMPLATE,
+                    color_continuous_scale='RdYlGn',  # Red (low) to Green (high) performance
+                    title=f"{title} (colored by {performance_metric.replace('_', ' ').title()})"
+                )
+                fig.update_coloraxes(colorbar_title=performance_metric.replace('_', ' ').title())
+            else:
+                # Fallback to regular scatter plot
+                fig = px.scatter(
+                    plot_data, 
+                    x='x', 
+                    y='y',
+                    hover_name='index',
+                    labels=axis_labels,
+                    template=TEMPLATE
+                )
+        else:
+            # Regular scatter plot for non-PCA methods or when no performance data
+            fig = px.scatter(
+                plot_data, 
+                x='x', 
+                y='y',
+                hover_name='index',
+                labels=axis_labels,
+                template=TEMPLATE
+            )
+        
+        # Update layout (title may have been modified for PCA with performance overlay)
+        # Check if the title was already set for PCA with performance coloring
+        current_title = ""
+        if fig.layout.title and fig.layout.title.text:
+            current_title = fig.layout.title.text
+        
+        if not (method == 'pca' and 'colored by' in current_title):
+            fig.update_layout(title=title)
+        
         fig.update_layout(
-            title=title,
             hovermode='closest',
             clickmode='event+select'
         )
@@ -1615,11 +2387,49 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         fig.update_traces(
             marker=dict(size=10, opacity=0.8),
             hovertext=hover_texts,
-            customdata=alpha_ids,  # Store clean alpha_ids for click handling
+            customdata=alpha_ids if 'alpha_ids' in locals() else plot_data['index'].tolist() if not plot_data.empty and 'index' in plot_data.columns else [],
             hovertemplate='%{hovertext}<br>Click to view on WorldQuant Brain<extra></extra>'
         )
         
-        # Highlight selected alpha if any
+        # Add green highlights for operator matches
+        if operator_alphas and not plot_data.empty:
+            operator_matches = plot_data[plot_data['index'].isin(operator_alphas)]
+            if not operator_matches.empty:
+                fig.add_trace(go.Scatter(
+                    x=operator_matches['x'],
+                    y=operator_matches['y'],
+                    mode='markers',
+                    marker=dict(
+                        color='green',
+                        size=12,
+                        opacity=0.7,
+                        line=dict(width=1, color='darkgreen')
+                    ),
+                    hoverinfo='skip',
+                    showlegend=True,
+                    name='Operator Match'
+                ))
+        
+        # Add dark green highlights for datafield matches
+        if datafield_alphas and not plot_data.empty:
+            datafield_matches = plot_data[plot_data['index'].isin(datafield_alphas)]
+            if not datafield_matches.empty:
+                fig.add_trace(go.Scatter(
+                    x=datafield_matches['x'],
+                    y=datafield_matches['y'],
+                    mode='markers',
+                    marker=dict(
+                        color='darkgreen',
+                        size=12,
+                        opacity=0.7,
+                        line=dict(width=1, color='green')
+                    ),
+                    hoverinfo='skip',
+                    showlegend=True,
+                    name='Datafield Match'
+                ))
+        
+        # Highlight selected alpha if any (highest priority - red)
         if selected_alpha:
             selected_index = selected_alpha.get('index')
             if selected_index in plot_data['index'].values:
@@ -1638,17 +2448,236 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
                     showlegend=False
                 ))
         
+        # Add biplot arrows for PCA method (feature vectors)
+        if method == 'pca' and pca_info and 'loadings' in pca_info:
+            loadings = pca_info['loadings']
+            if loadings.get('pc1') and loadings.get('pc2'):
+                # Scale factor for arrow visibility (adjust based on data range)
+                if not plot_data.empty:
+                    x_range = plot_data['x'].max() - plot_data['x'].min()
+                    y_range = plot_data['y'].max() - plot_data['y'].min()
+                    scale_factor = min(x_range, y_range) * 0.8  # Scale arrows to 80% of data range
+                else:
+                    scale_factor = 2
+                
+                # Add arrows for top 5 most contributing features
+                if 'top_features' in pca_info:
+                    top_features = pca_info['top_features'].get('pc1', [])[:5]  # Top 5 features
+                    
+                    for i, (feature, contrib) in enumerate(top_features):
+                        pc1_loading = loadings['pc1'].get(feature, 0)
+                        pc2_loading = loadings['pc2'].get(feature, 0)
+                        
+                        # Only show arrows for features with significant contribution
+                        if abs(pc1_loading) > 0.1 or abs(pc2_loading) > 0.1:
+                            arrow_x = pc1_loading * scale_factor
+                            arrow_y = pc2_loading * scale_factor
+                            
+                            # Add arrow line
+                            fig.add_trace(go.Scatter(
+                                x=[0, arrow_x],
+                                y=[0, arrow_y],
+                                mode='lines+markers',
+                                line=dict(color='rgba(255,0,0,0.6)', width=2),
+                                marker=dict(size=[0, 8], symbol=['circle', 'arrow-right']),
+                                showlegend=i == 0,  # Only show legend for first arrow
+                                name='Feature Vectors' if i == 0 else '',
+                                hovertemplate=f'{feature}<br>PC1: {pc1_loading:.3f}<br>PC2: {pc2_loading:.3f}<extra></extra>'
+                            ))
+                            
+                            # Add feature label
+                            fig.add_annotation(
+                                x=arrow_x,
+                                y=arrow_y,
+                                text=feature.replace('_', ' ').title(),
+                                showarrow=False,
+                                font=dict(size=10, color='red'),
+                                bgcolor='rgba(255,255,255,0.8)',
+                                bordercolor='red',
+                                borderwidth=1
+                            )
+        
+        # Create separate annotations to prevent overlap and use proper color indicators
+        annotations = []
+        
+        # Main instruction annotation
+        annotations.append(dict(
+            text="Click on a point to open its WorldQuant Brain link",
+            showarrow=False,
+            xref="paper",
+            yref="paper",
+            x=0,
+            y=-0.12,
+            font=dict(size=11),
+            xanchor="left"
+        ))
+        
+        # Highlighting legend (only show when there are highlights)
+        if operator_alphas or datafield_alphas:
+            legend_parts = []
+            if operator_alphas:
+                legend_parts.append("<span style='color:green'>●</span> Operator Match")
+            if datafield_alphas:
+                legend_parts.append("<span style='color:darkgreen'>●</span> Datafield Match")
+            legend_parts.append("<span style='color:red'>●</span> Selected")
+            
+            legend_text = " | ".join(legend_parts)
+            annotations.append(dict(
+                text=legend_text,
+                showarrow=False,
+                xref="paper",
+                yref="paper",
+                x=0,
+                y=-0.16,
+                font=dict(size=10),
+                xanchor="left"
+            ))
+        
         fig.update_layout(
-            annotations=[
-                dict(
-                    text="Click on a point to open its WorldQuant Brain link",
-                    showarrow=False,
-                    xref="paper",
-                    yref="paper",
-                    x=0,
-                    y=-0.1
-                )
-            ]
+            annotations=annotations,
+            margin=dict(b=80)  # Add more bottom margin to accommodate annotations
+        )
+        
+        return fig
+    
+    # Callback to update PCA dynamic information
+    @app.callback(
+        Output('pca-dynamic-info', 'children'),
+        Input('method-selector', 'value'),
+        State('current-pca-info', 'data')
+    )
+    def update_pca_info(method, pca_info):
+        if method != 'pca' or not pca_info:
+            return []
+        
+        content = []
+        
+        # Add variance explained information
+        if 'variance_explained' in pca_info:
+            var_exp = pca_info['variance_explained']
+            pc1_var = var_exp.get('pc1', 0) * 100
+            pc2_var = var_exp.get('pc2', 0) * 100
+            total_var = var_exp.get('total', 0) * 100
+            
+            content.append(html.P([
+                html.B("Variance Explained: "),
+                f"PC1 explains {pc1_var:.1f}% of variance, PC2 explains {pc2_var:.1f}% ",
+                f"(Total: {total_var:.1f}%)"
+            ], className="text-info"))
+        
+        # Add feature contributions
+        if 'top_features' in pca_info:
+            top_features = pca_info['top_features']
+            
+            if top_features.get('pc1'):
+                pc1_features = [f"{feat} ({contrib:.2f})" for feat, contrib in top_features['pc1']]
+                content.append(html.P([
+                    html.B("PC1 driven by: "),
+                    ", ".join(pc1_features)
+                ], className="small"))
+            
+            if top_features.get('pc2'):
+                pc2_features = [f"{feat} ({contrib:.2f})" for feat, contrib in top_features['pc2']]
+                content.append(html.P([
+                    html.B("PC2 driven by: "),
+                    ", ".join(pc2_features)
+                ], className="small"))
+        
+        # Add interpretation hints
+        if 'interpretation' in pca_info:
+            interp = pca_info['interpretation']
+            if interp.get('pc1') and interp['pc1'] != "Mixed factors":
+                content.append(html.P([
+                    html.B("X-axis (PC1): "),
+                    f"Right = {interp['pc1'].split('|')[0].replace('Higher: ', '').strip()}" if '|' in interp['pc1'] else f"Right = Higher {interp['pc1'].replace('Higher: ', '')}"
+                ], className="small text-success"))
+            
+            if interp.get('pc2') and interp['pc2'] != "Mixed factors":
+                content.append(html.P([
+                    html.B("Y-axis (PC2): "),
+                    f"Up = {interp['pc2'].split('|')[0].replace('Higher: ', '').strip()}" if '|' in interp['pc2'] else f"Up = Higher {interp['pc2'].replace('Higher: ', '')}"
+                ], className="small text-success"))
+        
+        # Add interpretability warning
+        if 'variance_explained' in pca_info:
+            total_var = pca_info['variance_explained'].get('total', 0) * 100
+            if total_var < 50:
+                content.append(html.Div([
+                    html.I(className="fas fa-exclamation-triangle me-2"),
+                    f"⚠️ Low variance explained ({total_var:.1f}%) - interpretation may be limited"
+                ], className="alert alert-warning alert-sm mt-2"))
+        
+        return content
+    
+    # Callback to update PCA loadings heatmap
+    @app.callback(
+        Output('pca-loadings-heatmap', 'figure'),
+        Input('method-selector', 'value'),
+        State('current-pca-info', 'data')
+    )
+    def update_pca_loadings_heatmap(method, pca_info):
+        if method != 'pca' or not pca_info or 'loadings' not in pca_info:
+            # Return empty figure
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No PCA loadings data available",
+                showarrow=False,
+                xref="paper", yref="paper", x=0.5, y=0.5,
+                font=dict(size=16)
+            )
+            return fig
+        
+        loadings = pca_info['loadings']
+        feature_names = loadings.get('feature_names', [])
+        pc1_loadings = loadings.get('pc1', {})
+        pc2_loadings = loadings.get('pc2', {})
+        
+        if not feature_names or not pc1_loadings or not pc2_loadings:
+            fig = go.Figure()
+            fig.add_annotation(
+                text="Incomplete PCA loadings data",
+                showarrow=False,
+                xref="paper", yref="paper", x=0.5, y=0.5,
+                font=dict(size=16)
+            )
+            return fig
+        
+        # Create loadings matrix for heatmap
+        loadings_matrix = []
+        components = ['PC1', 'PC2']
+        
+        # PC1 loadings
+        pc1_values = [pc1_loadings.get(feature, 0) for feature in feature_names]
+        pc2_values = [pc2_loadings.get(feature, 0) for feature in feature_names]
+        
+        loadings_matrix = [pc1_values, pc2_values]
+        
+        # Create heatmap
+        fig = go.Figure(data=go.Heatmap(
+            z=loadings_matrix,
+            x=[name.replace('_', ' ').title() for name in feature_names],
+            y=components,
+            colorscale='RdBu',  # Red-Blue diverging colorscale (good for loadings)
+            zmid=0,  # Center at 0
+            colorbar=dict(title="Loading Value"),
+            hovertemplate='<b>%{y}</b><br>Feature: %{x}<br>Loading: %{z:.3f}<extra></extra>'
+        ))
+        
+        # Add variance explained information to title if available
+        title = "PCA Feature Loadings"
+        if 'variance_explained' in pca_info:
+            var_exp = pca_info['variance_explained']
+            pc1_var = var_exp.get('pc1', 0) * 100
+            pc2_var = var_exp.get('pc2', 0) * 100
+            title = f"PCA Feature Loadings (PC1: {pc1_var:.1f}%, PC2: {pc2_var:.1f}%)"
+        
+        fig.update_layout(
+            title=title,
+            xaxis_title="Features",
+            yaxis_title="Principal Components",
+            template=TEMPLATE,
+            height=400,
+            xaxis=dict(tickangle=45)
         )
         
         return fig
@@ -1658,15 +2687,106 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         Output('alpha-details', 'children'),
         Output('selected-alpha', 'data'),
         Input('clustering-plot', 'clickData'),
-        State('current-metadata', 'data')
+        State('current-metadata', 'data'),
+        State('method-selector', 'value')
     )
-    def display_alpha_details(clickData, metadata_data):
+    def display_alpha_details(clickData, metadata_data, method):
         if not clickData:
             return "Click on a point to see alpha details.", None
         
-        # Get the alpha_id from the clicked point
+        # Get the clicked point data
         point = clickData['points'][0]
-        alpha_id = point.get('customdata', point.get('hovertext', 'unknown'))
+        
+        # Handle heatmap clicks (dual alpha display)
+        if method == 'heatmap':
+            # For heatmap, x and y contain the alpha IDs
+            alpha_x = point.get('x')
+            alpha_y = point.get('y')
+            correlation = point.get('z', 0)
+            
+            if alpha_x and alpha_y:
+                # Fetch details for both alphas
+                try:
+                    alpha_details_dict = get_alpha_details_for_clustering([alpha_x, alpha_y])
+                    alpha_x_info = alpha_details_dict.get(alpha_x, {})
+                    alpha_y_info = alpha_details_dict.get(alpha_y, {})
+                    
+                    # Create dual alpha display
+                    details = [
+                        html.H4(f"Correlation: {correlation:.3f}", className="text-center text-primary mb-3"),
+                        html.Hr(),
+                        
+                        # Create two columns for the two alphas
+                        dbc.Row([
+                            # Alpha X column
+                            dbc.Col([
+                                html.H5(f"Alpha X: {alpha_x}", className="text-info mb-2"),
+                                html.A(
+                                    dbc.Button("View on WQ Brain", color="primary", size="sm", className="mb-2"),
+                                    href=f"https://platform.worldquantbrain.com/alpha/{alpha_x}",
+                                    target="_blank"
+                                ),
+                                
+                                # Performance metrics
+                                html.H6("📊 Performance", className="text-success mt-2 mb-1"),
+                                html.Small([html.Strong("Sharpe: "), f"{alpha_x_info.get('is_sharpe', 0):.3f}"], className="d-block"),
+                                html.Small([html.Strong("Fitness: "), f"{alpha_x_info.get('is_fitness', 0):.3f}"], className="d-block"),
+                                html.Small([html.Strong("Returns: "), f"{alpha_x_info.get('is_returns', 0):.3f}"], className="d-block"),
+                                
+                                # Settings
+                                html.H6("⚙️ Settings", className="text-info mt-2 mb-1"),
+                                html.Small([html.Strong("Universe: "), alpha_x_info.get('universe', 'N/A')], className="d-block"),
+                                html.Small([html.Strong("Delay: "), str(alpha_x_info.get('delay', 'N/A'))], className="d-block"),
+                                
+                                # Expression
+                                html.H6("📝 Expression", className="text-warning mt-2 mb-1"),
+                                html.Code(
+                                    alpha_x_info.get('code', 'N/A')[:100] + ('...' if len(alpha_x_info.get('code', '')) > 100 else ''),
+                                    style={'font-size': '0.7rem', 'white-space': 'pre-wrap', 'word-wrap': 'break-word'}
+                                )
+                            ], width=6, style={'border-right': '1px solid #dee2e6'}),
+                            
+                            # Alpha Y column
+                            dbc.Col([
+                                html.H5(f"Alpha Y: {alpha_y}", className="text-info mb-2"),
+                                html.A(
+                                    dbc.Button("View on WQ Brain", color="primary", size="sm", className="mb-2"),
+                                    href=f"https://platform.worldquantbrain.com/alpha/{alpha_y}",
+                                    target="_blank"
+                                ),
+                                
+                                # Performance metrics
+                                html.H6("📊 Performance", className="text-success mt-2 mb-1"),
+                                html.Small([html.Strong("Sharpe: "), f"{alpha_y_info.get('is_sharpe', 0):.3f}"], className="d-block"),
+                                html.Small([html.Strong("Fitness: "), f"{alpha_y_info.get('is_fitness', 0):.3f}"], className="d-block"),
+                                html.Small([html.Strong("Returns: "), f"{alpha_y_info.get('is_returns', 0):.3f}"], className="d-block"),
+                                
+                                # Settings
+                                html.H6("⚙️ Settings", className="text-info mt-2 mb-1"),
+                                html.Small([html.Strong("Universe: "), alpha_y_info.get('universe', 'N/A')], className="d-block"),
+                                html.Small([html.Strong("Delay: "), str(alpha_y_info.get('delay', 'N/A'))], className="d-block"),
+                                
+                                # Expression
+                                html.H6("📝 Expression", className="text-warning mt-2 mb-1"),
+                                html.Code(
+                                    alpha_y_info.get('code', 'N/A')[:100] + ('...' if len(alpha_y_info.get('code', '')) > 100 else ''),
+                                    style={'font-size': '0.7rem', 'white-space': 'pre-wrap', 'word-wrap': 'break-word'}
+                                )
+                            ], width=6)
+                        ])
+                    ]
+                    
+                    return details, {'x': alpha_x, 'y': alpha_y, 'correlation': correlation}
+                    
+                except Exception as e:
+                    print(f"Error fetching dual alpha details: {e}")
+                    return html.P(f"Error loading details: {str(e)}", className="text-danger"), None
+            else:
+                return "Unable to extract alpha IDs from heatmap click.", None
+        
+        # Handle other visualization methods (single alpha display)
+        else:
+            alpha_id = point.get('customdata', point.get('hovertext', 'unknown'))
         
         # Create WorldQuant Brain URL
         wq_url = f"https://platform.worldquantbrain.com/alpha/{alpha_id}"
@@ -1997,7 +3117,7 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         
         # Get datafield metadata
         try:
-            temp_analysis_ops = AnalysisOperations(OPERATORS_FILE, DATAFIELDS_FILE)
+            temp_analysis_ops = create_analysis_operations()
             df_info = temp_analysis_ops.parser.datafields.get(datafield, {})
             dataset_id = df_info.get('dataset_id', 'Unknown')
             category = df_info.get('data_category', 'Unknown')
@@ -2169,7 +3289,7 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
     def handle_category_detail_click(category, count, unique_usage):
         """Handle click on category pie chart."""
         try:
-            temp_analysis_ops = AnalysisOperations(OPERATORS_FILE, DATAFIELDS_FILE)
+            temp_analysis_ops = create_analysis_operations()
             category_datafields = []
             total_alphas = set()
             
@@ -2388,10 +3508,12 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
                 html.Div([
                     dbc.Badge(
                         alpha['alpha_id'],
+                        href=f"https://platform.worldquantbrain.com/alpha/{alpha['alpha_id']}",
+                        target="_blank",
                         id={'type': 'alpha-badge', 'index': alpha['alpha_id']},
                         color="primary",
                         className="me-1 mb-1",
-                        style={'cursor': 'pointer'},
+                        style={'cursor': 'pointer', 'text-decoration': 'none'},
                         title=f"Sharpe: {alpha['is_sharpe']:.3f} | Universe: {alpha['universe']} | Region: {alpha['region_name']}"
                     ) for alpha in matching_alphas[:100]  # Limit to first 100 for performance
                 ], style={'max-height': '200px', 'overflow-y': 'auto', 'border': '1px solid #dee2e6', 'padding': '10px', 'border-radius': '4px'}, className="mb-3"),
@@ -2408,12 +3530,571 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None) -> dash.Dash
         
         return True, title, body_content
     
+    # Callback for View Alphas button in datafield recommendations
+    @app.callback(
+        [Output("detail-modal", "is_open", allow_duplicate=True),
+         Output("detail-modal-title", "children", allow_duplicate=True),
+         Output("detail-modal-body", "children", allow_duplicate=True)],
+        [Input({'type': 'view-datafield-alphas', 'index': dash.dependencies.ALL}, 'n_clicks')],
+        [State('recommendations-content', 'children')],
+        prevent_initial_call=True
+    )
+    def show_datafield_alphas(n_clicks_list, recommendations_content):
+        """Show alphas using a specific datafield."""
+        if not any(n_clicks_list):
+            raise dash.exceptions.PreventUpdate
+        
+        # Get which button was clicked
+        ctx = dash.callback_context
+        if not ctx.triggered:
+            raise dash.exceptions.PreventUpdate
+        
+        # Extract datafield_id from the button that was clicked
+        button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+        import json
+        button_dict = json.loads(button_id)
+        datafield_id = button_dict['index']
+        
+        # Get datafield usage information
+        try:
+            analysis_ops = create_analysis_operations()
+            recommendations_data = analysis_ops.get_datafield_recommendations()
+            datafield_usage = recommendations_data.get('datafield_usage', {})
+            
+            if datafield_id not in datafield_usage:
+                return True, f"Datafield: {datafield_id}", html.Div("No alpha data available for this datafield.")
+            
+            # Get alpha details for this datafield
+            usage_info = datafield_usage[datafield_id]
+            
+            # Create content showing alphas by region
+            content_parts = []
+            
+            for region, alpha_ids in usage_info.items():
+                region_section = html.Div([
+                    html.H5(f"{region} Region ({len(alpha_ids)} alphas)", className="mb-2"),
+                    html.Div([
+                        dbc.Badge(
+                            alpha_id,
+                            href=f"https://platform.worldquantbrain.com/alpha/{alpha_id}",
+                            target="_blank",
+                            color="primary",
+                            className="me-1 mb-1",
+                            style={'cursor': 'pointer', 'text-decoration': 'none'}
+                        ) for alpha_id in alpha_ids[:20]  # Show first 20 alphas per region
+                    ], className="mb-3"),
+                    html.Small(f"Showing {min(20, len(alpha_ids))} of {len(alpha_ids)} alphas") if len(alpha_ids) > 20 else None,
+                    html.Hr()
+                ])
+                content_parts.append(region_section)
+            
+            body_content = html.Div([
+                html.P(f"Alphas using datafield: {datafield_id}", className="text-muted mb-3"),
+                html.Div(content_parts, style={'max-height': '500px', 'overflow-y': 'auto'})
+            ])
+            
+            return True, f"Datafield: {datafield_id}", body_content
+            
+        except Exception as e:
+            logger.error(f"Error showing datafield alphas: {e}")
+            return True, "Error", html.Div(f"Error loading alpha data: {str(e)}")
+    
+    # Callback for datafield recommendations
+    @app.callback(
+        Output('recommendations-content', 'children'),
+        [Input('refresh-recommendations-btn', 'n_clicks'),
+         Input('recommendation-region-filter', 'value'),
+         Input('recommendation-type-filter', 'value')],
+        prevent_initial_call=False
+    )
+    def update_datafield_recommendations(n_clicks, selected_region, selected_data_type):
+        """Update datafield recommendations based on filters."""
+        try:
+            # Get analysis operations instance
+            analysis_ops = create_analysis_operations()
+            
+            # Get recommendations with both region and data type filtering
+            target_region = None if selected_region == 'all' else selected_region
+            target_data_type = None if selected_data_type == 'all' else selected_data_type
+            
+            recommendations_data = analysis_ops.get_datafield_recommendations(
+                selected_region=target_region,
+                selected_data_type=target_data_type
+            )
+            
+            if 'error' in recommendations_data:
+                return dbc.Alert(f"Error loading recommendations: {recommendations_data['error']}", color="danger")
+            
+            recommendations = recommendations_data.get('recommendations', [])
+            
+            if not recommendations:
+                return dbc.Alert(
+                    "No datafield recommendations found matching the current filters. Try adjusting the filters or analyzing more alphas.",
+                    color="info"
+                )
+            
+            # Create recommendations display
+            return create_recommendations_display(recommendations, recommendations_data)
+            
+        except Exception as e:
+            logger.error(f"Error updating recommendations: {e}")
+            return dbc.Alert(f"Error loading recommendations: {str(e)}", color="danger")
+    
+    def create_recommendations_display(recommendations, full_data):
+        """Create the display for datafield recommendations."""
+        total_analyzed = full_data.get('total_datafields_analyzed', 0)
+        
+        # Summary card
+        summary_card = dbc.Card([
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        html.H6("Total Datafields Analyzed", className="text-muted"),
+                        html.H3(str(total_analyzed))
+                    ], md=4),
+                    dbc.Col([
+                        html.H6("Expansion Opportunities", className="text-muted"),
+                        html.H3(str(len(recommendations)))
+                    ], md=4),
+                    dbc.Col([
+                        html.H6("Potential New Alphas", className="text-muted"),
+                        html.H3(str(sum(len(rec['recommended_regions']) for rec in recommendations)))
+                    ], md=4)
+                ])
+            ])
+        ], className="mb-4")
+        
+        # Create table rows for recommendations
+        table_rows = []
+        for idx, rec in enumerate(recommendations):  # Show all recommendations
+            # Create clickable region badges for used regions
+            used_badges = []
+            for region in rec['used_in_regions']:
+                usage_count = rec['usage_details'].get(region, 0)
+                badge = dbc.Badge(
+                    f"{region} ({usage_count} alphas)",
+                    color="success",
+                    className="me-1",
+                    id={'type': 'datafield-used-badge', 'idx': idx, 'region': region, 'datafield': rec['datafield_id']},
+                    style={'cursor': 'pointer', 'transition': 'transform 0.2s'},
+                    n_clicks=0
+                )
+                used_badges.append(badge)
+            
+            # Create detailed recommended badges with clickable functionality
+            recommended_badges = []
+            availability_details = rec.get('availability_details', {})
+            for region in rec['recommended_regions']:
+                matching_ids = availability_details.get(region, [])
+                if len(matching_ids) > 1:
+                    # Multiple matching datafields - make it clickable
+                    badge = dbc.Badge(
+                        f"{region} ({len(matching_ids)} IDs)",
+                        color="primary",
+                        className="me-1 datafield-clickable-badge",
+                        id={'type': 'datafield-region-badge', 'idx': idx, 'region': region, 'datafield': rec['datafield_id']},
+                        style={'cursor': 'pointer', 'transition': 'all 0.2s ease'},
+                        n_clicks=0,
+                        title=f"Click to view {len(matching_ids)} available datafields in {region}"
+                    )
+                elif len(matching_ids) == 1:
+                    # Single datafield but still make clickable for consistency
+                    badge = dbc.Badge(
+                        region,
+                        color="primary",
+                        className="me-1 datafield-clickable-badge",
+                        id={'type': 'datafield-region-badge', 'idx': idx, 'region': region, 'datafield': rec['datafield_id']},
+                        style={'cursor': 'pointer', 'transition': 'all 0.2s ease'},
+                        n_clicks=0,
+                        title=f"Click to view datafield details for {region}"
+                    )
+                else:
+                    # Fallback - no matching IDs
+                    badge = dbc.Badge(region, color="primary", className="me-1")
+                recommended_badges.append(badge)
+            
+            # Usage details
+            usage_text = ", ".join([
+                f"{region}: {count}" 
+                for region, count in rec['usage_details'].items()
+            ])
+            
+            # Check if this is a description-based match
+            matching_datafields = rec.get('matching_datafields', {})
+            if len(matching_datafields) > 1:
+                # Show indicator that this matches multiple datafield IDs
+                datafield_display = html.Span([
+                    rec['datafield_id'],
+                    html.Small(f" (+{len(matching_datafields)-1} similar)", className="text-muted ms-1")
+                ])
+            else:
+                datafield_display = rec['datafield_id']
+            
+            table_rows.append(
+                html.Tr([
+                    html.Td(datafield_display),
+                    html.Td(rec['description'][:100] + ('...' if len(rec['description']) > 100 else ''),
+                           title=rec['description']),
+                    html.Td(
+                        dbc.Badge(
+                            rec.get('data_type', 'Unknown'),
+                            color="secondary" if rec.get('data_type') == 'MATRIX' else 
+                                  "primary" if rec.get('data_type') == 'VECTOR' else 
+                                  "success" if rec.get('data_type') == 'GROUP' else "light",
+                            className="text-uppercase"
+                        )
+                    ),
+                    html.Td(usage_text),
+                    html.Td(used_badges),
+                    html.Td(recommended_badges),
+                    html.Td(
+                        dbc.Button(
+                            "View Alphas",
+                            id={'type': 'view-datafield-alphas', 'index': rec['datafield_id']},
+                            size="sm",
+                            color="info",
+                            outline=True
+                        )
+                    )
+                ])
+            )
+        
+        # Create the table
+        recommendations_table = dbc.Table([
+            html.Thead([
+                html.Tr([
+                    html.Th("Datafield ID"),
+                    html.Th("Description"),
+                    html.Th("Type"),
+                    html.Th("Usage Count"),
+                    html.Th("Used In"),
+                    html.Th("Recommended For"),
+                    html.Th("Actions")
+                ])
+            ]),
+            html.Tbody(table_rows)
+        ], striped=True, bordered=True, hover=True, responsive=True, size="sm")
+        
+        return html.Div([
+            summary_card,
+            html.H5("Datafield Expansion Opportunities", className="mb-3"),
+            html.P("The table below shows datafields you've used in submitted alphas and regions where they could be expanded. Click on region badges to see detailed datafield information.", 
+                   className="text-muted"),
+            recommendations_table,
+            # Modal for datafield details
+            dbc.Modal(
+                [
+                    dbc.ModalHeader(dbc.ModalTitle(id="datafield-modal-title")),
+                    dbc.ModalBody(id="datafield-modal-body"),
+                    dbc.ModalFooter(
+                        dbc.Button("Close", id="datafield-modal-close", className="ms-auto", n_clicks=0)
+                    ),
+                ],
+                id="datafield-detail-modal",
+                size="lg",
+                is_open=False,
+            )
+        ])
+    
+    # Callback for handling datafield region badge clicks
+    @app.callback(
+        [Output("datafield-detail-modal", "is_open"),
+         Output("datafield-modal-title", "children"),
+         Output("datafield-modal-body", "children")],
+        [Input({'type': 'datafield-region-badge', 'idx': dash.ALL, 'region': dash.ALL, 'datafield': dash.ALL}, 'n_clicks')],
+        [State("datafield-detail-modal", "is_open"),
+         State('recommendations-content', 'children')],
+        prevent_initial_call=True
+    )
+    def show_datafield_details(n_clicks_list, is_open, recommendations_content):
+        """Show detailed datafield information in modal when region badge is clicked."""
+        ctx = dash.callback_context
+        
+        if not ctx.triggered or not any(n_clicks_list):
+            return False, "", ""
+        
+        # Get the clicked badge info
+        triggered_prop = ctx.triggered[0]['prop_id']
+        badge_info = json.loads(triggered_prop.split('.')[0])
+        
+        region = badge_info['region']
+        datafield_id = badge_info['datafield']
+        idx = badge_info['idx']
+        
+        try:
+            # Get analysis operations instance for fresh data
+            analysis_ops = create_analysis_operations()
+            
+            # Get recommendations data to find the specific recommendation
+            recommendations_data = analysis_ops.get_datafield_recommendations()
+            recommendations = recommendations_data.get('recommendations', [])
+            
+            # Find the specific recommendation
+            rec = None
+            for recommendation in recommendations:
+                if recommendation['datafield_id'] == datafield_id:
+                    rec = recommendation
+                    break
+            
+            if not rec:
+                return True, f"Datafield Details: {datafield_id}", html.Div("Recommendation data not found.")
+            
+            # Get availability details for this region
+            availability_details = rec.get('availability_details', {})
+            matching_ids = availability_details.get(region, [])
+            
+            # Get detailed information for each matching datafield
+            datafield_info_list = []
+            for df_id in matching_ids:
+                # Get datafield metadata from parser
+                df_info = analysis_ops.parser.datafields.get(df_id, {})
+                
+                datafield_info_list.append({
+                    'id': df_id,
+                    'description': df_info.get('data_description', rec['description']),
+                    'dataset': df_info.get('dataset_id', 'Unknown'),
+                    'category': df_info.get('data_category', 'Unknown'),
+                    'data_type': df_info.get('data_type', rec.get('data_type', 'Unknown')),
+                    'delay': df_info.get('delay', 'Unknown')
+                })
+            
+            # Create modal title
+            modal_title = f"Available Datafields in {region}"
+            
+            # Create modal body with detailed information
+            modal_body = [
+                html.H5(f"📊 Region: {region}", className="mb-3"),
+                html.P(f"Found {len(matching_ids)} datafield(s) matching the description:", className="text-muted"),
+                html.P(html.Em(rec['description'][:200] + ('...' if len(rec['description']) > 200 else '')), 
+                       className="mb-3"),
+                html.Hr(),
+            ]
+            
+            # Add detailed info for each datafield
+            for i, df_info in enumerate(datafield_info_list, 1):
+                card = dbc.Card([
+                    dbc.CardHeader([
+                        html.H6([
+                            html.Span(f"Datafield {i}: ", className="text-muted"),
+                            html.Code(df_info['id'], className="bg-light p-1")
+                        ], className="mb-0")
+                    ]),
+                    dbc.CardBody([
+                        dbc.Row([
+                            dbc.Col([
+                                html.Strong("Dataset: "),
+                                html.Span(df_info['dataset'], className="badge bg-success ms-2")
+                            ], md=6),
+                            dbc.Col([
+                                html.Strong("Category: "),
+                                html.Span(df_info['category'], className="badge bg-info ms-2")
+                            ], md=6)
+                        ], className="mb-2"),
+                        dbc.Row([
+                            dbc.Col([
+                                html.Strong("Type: "),
+                                html.Span(df_info['data_type'], className="badge bg-secondary ms-2")
+                            ], md=6),
+                            dbc.Col([
+                                html.Strong("Delay: "),
+                                html.Span(str(df_info['delay']), className="badge bg-warning ms-2")
+                            ], md=6)
+                        ])
+                    ])
+                ], className="mb-3")
+                modal_body.append(card)
+            
+            # Add usage statistics
+            usage_section = html.Div([
+                html.Hr(),
+                html.H6("📈 Usage Statistics", className="mb-3"),
+                dbc.ListGroup([
+                    dbc.ListGroupItem([
+                        html.Strong("Currently used in: "),
+                        html.Span(", ".join(rec['used_in_regions']), className="text-primary")
+                    ]),
+                    dbc.ListGroupItem([
+                        html.Strong("Total alphas using: "),
+                        html.Span(str(rec['alpha_count']), className="badge bg-primary ms-2")
+                    ]),
+                    dbc.ListGroupItem([
+                        html.Strong("Available for expansion in: "),
+                        html.Span(", ".join(rec['recommended_regions']), className="text-success")
+                    ])
+                ], flush=True)
+            ])
+            modal_body.append(usage_section)
+            
+            return True, modal_title, modal_body
+            
+        except Exception as e:
+            logger.error(f"Error showing datafield details: {e}")
+            return True, "Error", html.Div(f"Error loading datafield details: {str(e)}")
+    
+    # Callback for handling used datafield region badge clicks
+    @app.callback(
+        [Output("datafield-detail-modal", "is_open", allow_duplicate=True),
+         Output("datafield-modal-title", "children", allow_duplicate=True),
+         Output("datafield-modal-body", "children", allow_duplicate=True)],
+        [Input({'type': 'datafield-used-badge', 'idx': dash.ALL, 'region': dash.ALL, 'datafield': dash.ALL}, 'n_clicks')],
+        [State("datafield-detail-modal", "is_open")],
+        prevent_initial_call=True
+    )
+    def show_used_datafield_details(n_clicks_list, is_open):
+        """Show alphas using this datafield in the specified region."""
+        ctx = dash.callback_context
+        
+        if not ctx.triggered or not any(n_clicks_list):
+            return False, "", ""
+        
+        # Get the clicked badge info
+        triggered_prop = ctx.triggered[0]['prop_id']
+        badge_info = json.loads(triggered_prop.split('.')[0])
+        
+        region = badge_info['region']
+        datafield_id = badge_info['datafield']
+        
+        try:
+            # Get analysis operations instance
+            analysis_ops = create_analysis_operations()
+            
+            # Get the alphas using this datafield in this region
+            db_engine = analysis_ops._get_db_engine()
+            with db_engine.connect() as connection:
+                query = text("""
+                    SELECT DISTINCT
+                        a.alpha_id,
+                        a.code,
+                        a.is_sharpe,
+                        a.is_fitness
+                    FROM alphas a
+                    JOIN regions r ON a.region_id = r.region_id
+                    JOIN alpha_analysis_cache ac ON a.alpha_id = ac.alpha_id
+                    WHERE r.region_name = :region
+                    AND ac.datafields_unique::jsonb ? :datafield_id
+                    ORDER BY a.is_sharpe DESC NULLS LAST
+                    LIMIT 50
+                """)
+                
+                result = connection.execute(query, {'region': region, 'datafield_id': datafield_id})
+                alphas = result.fetchall()
+            
+            # Create modal content
+            modal_title = f"Alphas Using {datafield_id} in {region}"
+            
+            modal_body = [
+                html.H5(f"📊 Datafield: {datafield_id}", className="mb-2"),
+                html.H6(f"🌍 Region: {region}", className="mb-3"),
+                html.Hr(),
+                html.P(f"Found {len(alphas)} alpha(s) using this datafield:", className="text-muted"),
+            ]
+            
+            if alphas:
+                # Create a table of alphas
+                alpha_rows = []
+                for alpha in alphas[:20]:  # Show top 20
+                    alpha_rows.append(
+                        html.Tr([
+                            html.Td(
+                                html.A(
+                                    alpha.alpha_id,
+                                    href=f"https://platform.worldquantbrain.com/alpha/{alpha.alpha_id}",
+                                    target="_blank",
+                                    className="text-decoration-none"
+                                )
+                            ),
+                            html.Td(f"{alpha.is_sharpe:.3f}" if alpha.is_sharpe else "N/A"),
+                            html.Td(f"{alpha.is_fitness:.3f}" if alpha.is_fitness else "N/A"),
+                            html.Td(
+                                html.Code(
+                                    alpha.code[:50] + "..." if len(alpha.code) > 50 else alpha.code,
+                                    className="small"
+                                ),
+                                title=alpha.code
+                            )
+                        ])
+                    )
+                
+                alpha_table = dbc.Table([
+                    html.Thead([
+                        html.Tr([
+                            html.Th("Alpha ID"),
+                            html.Th("Sharpe"),
+                            html.Th("Fitness"),
+                            html.Th("Code Preview")
+                        ])
+                    ]),
+                    html.Tbody(alpha_rows)
+                ], striped=True, hover=True, responsive=True, size="sm")
+                
+                modal_body.append(alpha_table)
+                
+                if len(alphas) > 20:
+                    modal_body.append(
+                        html.P(f"Showing top 20 of {len(alphas)} alphas", className="text-muted text-center mt-2")
+                    )
+            else:
+                modal_body.append(
+                    dbc.Alert("No alphas found using this datafield in this region.", color="info")
+                )
+            
+            return True, modal_title, modal_body
+            
+        except Exception as e:
+            print(f"Error showing used datafield details: {e}")
+            return True, "Error", html.Div(f"Error loading alpha details: {str(e)}")
+    
+    # Callback to close the datafield modal
+    @app.callback(
+        Output("datafield-detail-modal", "is_open", allow_duplicate=True),
+        [Input("datafield-modal-close", "n_clicks")],
+        [State("datafield-detail-modal", "is_open")],
+        prevent_initial_call=True
+    )
+    def close_datafield_modal(n_clicks, is_open):
+        if n_clicks:
+            return False
+        return is_open
+    
     return app
 
 def open_browser(port, delay=1):
     """Open browser after a delay."""
     time.sleep(delay)
     webbrowser.open(f'http://localhost:{port}')
+
+def create_app():
+    """
+    Create a Dash app with default settings for production deployment.
+    This function is used by wsgi.py for WSGI server deployment.
+    
+    Returns:
+        Dash app configured for production
+    """
+    # Use default operators file
+    global OPERATORS_FILE, DYNAMIC_OPERATORS_LIST
+    OPERATORS_FILE = DEFAULT_OPERATORS_FILE
+    
+    # Try to load dynamic operators if JSON file exists
+    if os.path.exists(OPERATORS_FILE) and OPERATORS_FILE.endswith('.json'):
+        try:
+            import json
+            with open(OPERATORS_FILE, 'r') as f:
+                operators_data = json.load(f)
+            
+            if isinstance(operators_data, dict) and 'operators' in operators_data:
+                DYNAMIC_OPERATORS_LIST = [op['name'] for op in operators_data['operators']]
+                print(f"✅ Production mode: Loaded {len(DYNAMIC_OPERATORS_LIST)} dynamic operators")
+            elif isinstance(operators_data, list):
+                DYNAMIC_OPERATORS_LIST = operators_data
+                print(f"✅ Production mode: Loaded {len(DYNAMIC_OPERATORS_LIST)} operators")
+        except Exception as e:
+            print(f"⚠️ Production mode: Using default operators (error loading JSON: {e})")
+    
+    # Create and return the app without clustering data (analysis-only mode)
+    print("🚀 Initializing dashboard in production mode...")
+    app = create_visualization_app(data=None, operators_list=DYNAMIC_OPERATORS_LIST)
+    return app
 
 def main():
     """
@@ -2425,8 +4106,41 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Run in debug mode")
     parser.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
     parser.add_argument("--init-db", action="store_true", help="Initialize analysis database schema")
+    parser.add_argument("--operators-file", type=str, help="Path to custom operators file (JSON or TXT)")
     
     args = parser.parse_args()
+    
+    # Set global file paths based on arguments
+    global OPERATORS_FILE
+    
+    if args.operators_file:
+        OPERATORS_FILE = args.operators_file
+        print(f"🔄 Using dynamic operators file: {OPERATORS_FILE}")
+    else:
+        OPERATORS_FILE = DEFAULT_OPERATORS_FILE
+        print(f"📁 Using default operators file: {OPERATORS_FILE}")
+    
+    # Load dynamic operators list if using JSON file
+    global DYNAMIC_OPERATORS_LIST
+    if OPERATORS_FILE.endswith('.json'):
+        try:
+            import json
+            with open(OPERATORS_FILE, 'r') as f:
+                operators_data = json.load(f)
+            
+            if isinstance(operators_data, dict) and 'operators' in operators_data:
+                # Extract operator names from API response format
+                DYNAMIC_OPERATORS_LIST = [op['name'] for op in operators_data['operators']]
+                print(f"✅ Loaded {len(DYNAMIC_OPERATORS_LIST)} dynamic operators from JSON file")
+            elif isinstance(operators_data, list):
+                # Direct list of operator names
+                DYNAMIC_OPERATORS_LIST = operators_data
+                print(f"✅ Loaded {len(DYNAMIC_OPERATORS_LIST)} dynamic operators from JSON list")
+            else:
+                print(f"⚠️ Unsupported JSON format in {OPERATORS_FILE}, falling back to file parsing")
+                
+        except Exception as e:
+            print(f"⚠️ Error loading operators from JSON: {e}, falling back to file parsing")
     
     # Initialize database if requested
     if args.init_db:
@@ -2454,7 +4168,7 @@ def main():
     
     # Create app
     print("Initializing dashboard...")
-    app = create_visualization_app(data)
+    app = create_visualization_app(data, DYNAMIC_OPERATORS_LIST)
     
     # Start browser opener thread
     if not args.no_browser:

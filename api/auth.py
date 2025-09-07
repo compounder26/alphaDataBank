@@ -67,10 +67,10 @@ def get_authenticated_session(session: Optional[requests.Session] = None) -> Opt
     Returns:
         An authenticated requests.Session object or None if authentication fails.
     """
-    # Import ace module from project root
+    # Import ace module from legacy directory
     try:
         # First try to import directly (if package is properly installed or in PYTHONPATH)
-        import ace
+        from legacy import ace
     except ImportError:
         # If direct import fails, try relative import paths
         logger.debug(f"Direct import of ace failed, trying alternative paths")
@@ -80,14 +80,14 @@ def get_authenticated_session(session: Optional[requests.Session] = None) -> Opt
         # Add project root to path only temporarily for this function
         import importlib.util
         try:
-            # Try to load the module by file path
-            spec = importlib.util.spec_from_file_location("ace", os.path.join(project_root, "ace.py"))
+            # Try to load the module by file path from legacy directory
+            spec = importlib.util.spec_from_file_location("ace", os.path.join(project_root, "legacy", "ace.py"))
             if spec and spec.loader:
                 ace = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(ace)
-                logger.debug(f"Successfully loaded ace module from {os.path.join(project_root, 'ace.py')}")
+                logger.debug(f"Successfully loaded ace module from {os.path.join(project_root, 'legacy', 'ace.py')}")
             else:
-                raise ImportError(f"Could not load ace module from {os.path.join(project_root, 'ace.py')}")
+                raise ImportError(f"Could not load ace module from {os.path.join(project_root, 'legacy', 'ace.py')}")
         except Exception as e:
             logger.error(f"Failed to import ace module: {e}")
             raise
@@ -124,7 +124,7 @@ def _reauthenticate_session_inplace(session: requests.Session) -> bool:
     """
     try:
         # Import ace module to use its authentication logic
-        import ace
+        from legacy import ace
         
         # Clear the existing authentication and cookies
         session.auth = None

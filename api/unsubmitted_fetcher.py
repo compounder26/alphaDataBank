@@ -48,7 +48,7 @@ def fetch_unsubmitted_alphas_from_url(session: requests.Session, url: str) -> Li
         # Make the request using the base URL and extracted parameters
         base_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
         
-        response = authenticated_get(base_url, session=session, params=clean_params, timeout=30)
+        response = authenticated_get(base_url, session=session, params=clean_params, timeout=60)
         response.raise_for_status()
         
         data = response.json()
@@ -77,7 +77,7 @@ def fetch_unsubmitted_alphas_from_url(session: requests.Session, url: str) -> Li
             
             # Fetch remaining batches in parallel
             try:
-                with ThreadPoolExecutor(max_workers=5) as executor:
+                with ThreadPoolExecutor(max_workers=20) as executor:
                     # Submit all batch requests
                     futures: List[Future] = []
                     for batch_offset in remaining_offsets:
@@ -142,7 +142,7 @@ def _fetch_single_batch(session: requests.Session, base_url: str, clean_params: 
     batch_params['offset'] = str(offset)
     
     try:
-        batch_response = authenticated_get(base_url, session=session, params=batch_params, timeout=30)
+        batch_response = authenticated_get(base_url, session=session, params=batch_params, timeout=60)
         batch_response.raise_for_status()
         batch_data = batch_response.json()
         batch_results = batch_data.get('results', [])

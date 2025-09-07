@@ -19,7 +19,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from api.auth import get_authenticated_session, check_session_valid, set_global_session
 from api.alpha_fetcher import scrape_alphas_by_region, get_alpha_pnl_threaded, get_robust_session, warm_up_api_connection
-from database.schema import initialize_database
+from database.schema import initialize_database, initialize_analysis_database
 from config.database_config import REGIONS as CONFIGURED_REGIONS # Import and alias to avoid conflict
 from database.operations import (
     insert_alpha,
@@ -33,8 +33,8 @@ from database.operations import (
     get_correlation_statistics
 )
 
-# Import optimized correlation calculation
-from scripts.update_correlations_optimized import calculate_and_store_correlations_optimized
+# Import unified correlation engine
+from correlation.correlation_engine import CorrelationEngine
 from utils.helpers import setup_logging, print_correlation_report
 from config.database_config import REGIONS
 
@@ -50,7 +50,6 @@ from database.operations_unsubmitted import (
     insert_multiple_unsubmitted_pnl_data_optimized
 )
 from database.schema import initialize_unsubmitted_database
-from scripts.calculate_unsubmitted_correlations import calculate_unsubmitted_vs_submitted_correlations
 
 def process_unsubmitted_alphas(url: str, regions_to_process: List[str], skip_init: bool = False, 
                               skip_alpha_fetch: bool = False, skip_pnl_fetch: bool = False, 
@@ -149,7 +148,7 @@ def process_unsubmitted_alphas(url: str, regions_to_process: List[str], skip_ini
                     
                     # Use the same PNL fetching logic as submitted alphas
                     combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
-                        session, alpha_ids_for_pnl, max_workers=10
+                        session, alpha_ids_for_pnl, max_workers=20
                     )
                     
                     if combined_pnl_df is not None and not combined_pnl_df.empty:
@@ -289,7 +288,7 @@ def process_unsubmitted_alphas_auto(
                             if alpha_ids_for_pnl:
                                 logging.info(f"📈 Fetching PNL for {len(alpha_ids_for_pnl)} existing alphas in {region}...")
                                 combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
-                                    session, alpha_ids_for_pnl, max_workers=10
+                                    session, alpha_ids_for_pnl, max_workers=20
                                 )
                                 if combined_pnl_df is not None and not combined_pnl_df.empty:
                                     pnl_data_dict = {}
@@ -303,7 +302,9 @@ def process_unsubmitted_alphas_auto(
                     
                     if not skip_correlation:
                         try:
-                            calculate_unsubmitted_vs_submitted_correlations(region)
+                            # Use unified correlation engine
+                            correlation_engine = CorrelationEngine()
+                            correlation_engine.calculate_unsubmitted_vs_submitted(region)
                             logging.info(f"✅ Updated correlations for {region}")
                         except Exception as e:
                             logging.error(f"Error calculating correlations for {region}: {e}")
@@ -442,10 +443,16 @@ def main():
 
     # Continue with regular (submitted) alphas processing below
     if not args.skip_init:
-        logging.info("Initializing database...")
+        logging.info("Initializing database schemas...")
         try:
             initialize_database()
-            logging.info("Database initialization complete")
+            logging.info("Main database schema initialized")
+            
+            # Also initialize analysis schema for dashboard compatibility
+            initialize_analysis_database()
+            logging.info("Analysis database schema initialized")
+            
+            logging.info("Complete database initialization finished")
         except Exception as e:
             logging.error(f"Database initialization failed: {e}")
             return
@@ -590,7 +597,7 @@ def main():
                         combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
                             session, 
                             alpha_ids_for_pnl, 
-                            max_workers=10 
+                            max_workers=20 
                         )
                         
                         if combined_pnl_df is not None and not combined_pnl_df.empty:
@@ -651,11 +658,12 @@ def main():
         # Calculate correlations if not skipped and data has changed
         if not args.skip_correlation:
             if data_changed_in_region_flags.get(region_name, False): # Check if data actually changed
-                logging.info(f"Attempting optimized correlation calculation for region: {region_name} (data changed)...")
+                logging.info(f"Attempting correlation calculation for region: {region_name} (data changed)...")
                 try:
-                    # Use the Cython-accelerated correlation calculation
-                    calculate_and_store_correlations_optimized(region_name)
-                    logging.info(f"Successfully updated correlation statistics for region {region_name} with optimized calculation.")
+                    # Use unified correlation engine
+                    correlation_engine = CorrelationEngine()
+                    correlation_engine.calculate_batch_submitted(region_name)
+                    logging.info(f"Successfully updated correlation statistics for region {region_name}.")
                 except Exception as e:
                     logging.error(f"Error calculating correlations for {region_name}: {e}")
             else:

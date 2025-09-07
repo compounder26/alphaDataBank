@@ -26,7 +26,7 @@ def fetch_all_unsubmitted_alphas_auto(
     batch_size: int = 50,
     start_date: str = "2020-01-01",
     end_date: Optional[str] = None,
-    request_timeout: int = 30,
+    request_timeout: int = 60,
     retry_wait_seconds: int = 5,
     max_retries: int = 3,
     process_immediately: bool = True,
@@ -125,7 +125,7 @@ def fetch_all_unsubmitted_alphas_auto(
                 request_timeout=request_timeout,
                 retry_wait_seconds=retry_wait_seconds,
                 max_retries=max_retries,
-                max_workers=5
+                max_workers=20
             )
             
             if threshold_alphas:
@@ -208,7 +208,7 @@ def _process_threshold_streaming(
             start_date=start_date,
             end_date=current_end_date,
             batch_size=batch_size,
-            max_workers=5,
+            max_workers=20,
             max_batches_per_window=200,
             request_timeout=request_timeout,
             retry_wait_seconds=retry_wait_seconds,
@@ -256,7 +256,7 @@ def _process_threshold_streaming(
                         
                         # Use existing parallel PNL fetching
                         combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
-                            session, alpha_ids_for_pnl, max_workers=10
+                            session, alpha_ids_for_pnl, max_workers=20
                         )
                         
                         if combined_pnl_df is not None and not combined_pnl_df.empty:
@@ -328,7 +328,7 @@ def _fetch_alphas_for_date_window_parallel(
     batch_size: int,
     max_workers: int = 10,
     max_batches_per_window: int = 200,  # 10,000 alphas / 50 = 200 batches max
-    request_timeout: int = 30,
+    request_timeout: int = 60,
     retry_wait_seconds: int = 5,
     max_retries: int = 3
 ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
@@ -557,7 +557,7 @@ def _fetch_unsubmitted_batch(
     end_date: str,
     offset: int,
     batch_size: int,
-    request_timeout: int = 30,
+    request_timeout: int = 60,
     retry_wait_seconds: int = 5,
     max_retries: int = 3
 ) -> Tuple[List[Dict[str, Any]], bool]:

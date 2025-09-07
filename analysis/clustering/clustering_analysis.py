@@ -24,6 +24,9 @@ from database.operations import (
 )
 from config.database_config import REGIONS
 
+# Import correlation engine for correct correlation calculation
+from correlation.correlation_engine import CorrelationEngine
+
 # Import scikit-learn components for dimensionality reduction
 from sklearn.manifold import MDS, TSNE
 from sklearn.preprocessing import StandardScaler
@@ -31,25 +34,41 @@ from sklearn.decomposition import PCA
 import umap
 
 def calculate_correlation_matrix(pnl_data_dict: Dict[str, Dict[str, pd.DataFrame]], 
-                                min_common_days: int = 60) -> pd.DataFrame:
+                                min_common_days: int = 60,
+                                use_cython: bool = True) -> pd.DataFrame:
     """
     Calculate pairwise Pearson correlation matrix from daily PnL data.
+    Uses the same correlation calculation method as scripts/calculate_correlations.py
     
     Args:
         pnl_data_dict: Dictionary mapping alpha_id to a dictionary containing DataFrame with PnL data
                       Format: {alpha_id: {'df': dataframe}}
         min_common_days: Minimum number of common trading days required
+        use_cython: Whether to use Cython acceleration (default: True)
         
     Returns:
         DataFrame containing the correlation matrix
     """
+    # Initialize correlation engine with same method as main scripts
+    correlation_engine = CorrelationEngine(use_cython=use_cython)
+    
     # Extract alpha IDs and validate data
     alpha_ids = []
+    pnl_arrays = {}  # Store numpy arrays for correlation calculation
+    
     for alpha_id, data in pnl_data_dict.items():
         # Ensure we have a valid dataframe with at least some data
         if data is None or 'df' not in data or data['df'] is None or len(data['df']) < min_common_days:
             print(f"Warning: Skipping alpha {alpha_id} due to insufficient data")
             continue
+            
+        df = data['df']
+        if 'pnl' not in df.columns:
+            print(f"Warning: Missing 'pnl' column for alpha {alpha_id}")
+            continue
+            
+        # Store cumulative PnL as numpy array (this is what correlation engine expects)
+        pnl_arrays[alpha_id] = df['pnl'].values
         alpha_ids.append(alpha_id)
     
     n_alphas = len(alpha_ids)
@@ -62,76 +81,74 @@ def calculate_correlation_matrix(pnl_data_dict: Dict[str, Dict[str, pd.DataFrame
                              index=alpha_ids, 
                              columns=alpha_ids)
     
-    # Calculate correlations between all pairs of alphas
+    # Calculate correlations between all pairs of alphas using the correct method
     for i in range(n_alphas):
         alpha_id1 = alpha_ids[i]
-        alpha_data1 = pnl_data_dict[alpha_id1]
-        
-        # Check if data exists and has expected structure
-        if alpha_data1 is None or 'df' not in alpha_data1 or alpha_data1['df'] is None:
-            continue
-            
-        alpha_pnl1 = alpha_data1['df']
+        pnl1 = pnl_arrays[alpha_id1]
         
         for j in range(i+1, n_alphas):
             alpha_id2 = alpha_ids[j]
-            alpha_data2 = pnl_data_dict[alpha_id2]
-            
-            # Check if data exists and has expected structure
-            if alpha_data2 is None or 'df' not in alpha_data2 or alpha_data2['df'] is None:
-                continue
-                
-            alpha_pnl2 = alpha_data2['df']
-            
-            # Ensure dataframes have an index (dates)
-            if not hasattr(alpha_pnl1, 'index') or not hasattr(alpha_pnl2, 'index'):
-                print(f"Warning: Missing index for alpha pair {alpha_id1}/{alpha_id2}")
-                continue
+            pnl2 = pnl_arrays[alpha_id2]
             
             try:
-                # Find common dates between the two alphas
-                common_dates = alpha_pnl1.index.intersection(alpha_pnl2.index)
+                # Find common dates by aligning the PnL series
+                # Get original dataframes to check dates
+                df1 = pnl_data_dict[alpha_id1]['df']
+                df2 = pnl_data_dict[alpha_id2]['df']
                 
-                # Only calculate correlation if we have enough common dates
+                # Find common dates
+                common_dates = df1.index.intersection(df2.index)
+                
                 if len(common_dates) >= min_common_days:
-                    # Check if 'pnl' column exists
-                    if 'pnl' not in alpha_pnl1.columns or 'pnl' not in alpha_pnl2.columns:
-                        print(f"Warning: Missing 'pnl' column for alpha pair {alpha_id1}/{alpha_id2}")
-                        continue
-                        
-                    # Calculate correlation of daily returns
-                    pnl1 = alpha_pnl1.loc[common_dates, 'pnl']
-                    pnl2 = alpha_pnl2.loc[common_dates, 'pnl']
+                    # Get aligned PnL arrays for common dates
+                    aligned_pnl1 = df1.loc[common_dates, 'pnl'].values
+                    aligned_pnl2 = df2.loc[common_dates, 'pnl'].values
                     
-                    # Convert PnL to daily returns (assumes starting with cumulative PnL)
-                    returns1 = pnl1.diff().dropna()
-                    returns2 = pnl2.diff().dropna()
+                    # Use the correlation engine's method (same as scripts/calculate_correlations.py)
+                    # This correctly calculates percentage returns internally
+                    correlation = correlation_engine.calculate_pairwise(
+                        aligned_pnl1, 
+                        aligned_pnl2
+                    )
                     
-                    # Calculate correlation on common dates with valid returns
-                    common_return_dates = returns1.index.intersection(returns2.index)
-                    if len(common_return_dates) >= min_common_days:
-                        correlation = returns1[common_return_dates].corr(returns2[common_return_dates])
-                        
+                    if correlation is not None:
                         # Store in symmetric matrix
                         corr_matrix.loc[alpha_id1, alpha_id2] = correlation
                         corr_matrix.loc[alpha_id2, alpha_id1] = correlation
+                    else:
+                        print(f"Warning: Correlation calculation returned None for {alpha_id1}/{alpha_id2}")
+                else:
+                    print(f"Warning: Not enough common dates ({len(common_dates)}) for {alpha_id1}/{alpha_id2}")
+                    
             except Exception as e:
                 print(f"Warning: Error calculating correlation for {alpha_id1}/{alpha_id2}: {e}")
     
     return corr_matrix
 
-def mds_on_correlation_matrix(corr_matrix: pd.DataFrame) -> pd.DataFrame:
+def mds_on_correlation_matrix(corr_matrix: pd.DataFrame, 
+                            distance_type: str = 'euclidean') -> pd.DataFrame:
     """
     Apply Multidimensional Scaling (MDS) on the correlation matrix to get 2D coordinates.
     
     Args:
         corr_matrix: Correlation matrix (DataFrame)
+        distance_type: Type of distance metric ('euclidean' or 'angular')
         
     Returns:
         DataFrame with alpha_id as index and x, y coordinates as columns
     """
-    # Convert correlation to dissimilarity: D_ij = 1 - C_ij
-    dissimilarity_matrix = 1 - corr_matrix
+    # Convert correlation to dissimilarity using proper distance metric
+    if distance_type == 'euclidean':
+        # Euclidean distance in correlation space: d = sqrt(2 * (1 - corr))
+        # This properly handles negative correlations
+        dissimilarity_matrix = np.sqrt(2 * (1 - corr_matrix))
+    elif distance_type == 'angular':
+        # Angular distance: d = sqrt(0.5 * (1 - corr))
+        # Maps correlation to angle between vectors
+        dissimilarity_matrix = np.sqrt(0.5 * (1 - corr_matrix))
+    else:
+        # Fallback to simple dissimilarity (less mathematically correct)
+        dissimilarity_matrix = 1 - corr_matrix
     
     # Ensure diagonal is 0
     np.fill_diagonal(dissimilarity_matrix.values, 0)
@@ -139,7 +156,8 @@ def mds_on_correlation_matrix(corr_matrix: pd.DataFrame) -> pd.DataFrame:
     # Apply MDS
     mds = MDS(n_components=2, 
              dissimilarity='precomputed', 
-             random_state=0)
+             random_state=0,
+             metric=True)  # Use metric MDS for better preservation of distances
     
     # Transform to 2D coordinates
     coords = mds.fit_transform(dissimilarity_matrix)
@@ -239,7 +257,7 @@ def calculate_performance_features(pnl_data_dict: Dict[str, Dict[str, pd.DataFra
 
 def apply_dimensionality_reduction(features_df: pd.DataFrame, 
                                  method: str = 'tsne',
-                                 random_state: int = 42) -> pd.DataFrame:
+                                 random_state: int = 42) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """
     Apply dimensionality reduction to the feature matrix.
     
@@ -249,22 +267,24 @@ def apply_dimensionality_reduction(features_df: pd.DataFrame,
         random_state: Random state for reproducibility
         
     Returns:
-        DataFrame with alpha_id as index and x, y coordinates as columns
+        Tuple of:
+        - DataFrame with alpha_id as index and x, y coordinates as columns
+        - Dictionary with additional model information (loadings, variance explained, etc.)
     """
     # Check if we have enough samples
     if features_df.empty:
         print(f"Cannot apply {method}: Empty feature dataframe")
-        return pd.DataFrame()
+        return pd.DataFrame(), {}
         
     if len(features_df) < 2:
         print(f"Cannot apply {method}: Need at least 2 samples, got {len(features_df)}")
-        return pd.DataFrame()
+        return pd.DataFrame(), {}
     
     # Drop any rows with NaN values
     features_df = features_df.dropna()
     if features_df.empty or len(features_df) < 2:
         print(f"Cannot apply {method}: Not enough valid samples after dropping NaNs")
-        return pd.DataFrame()
+        return pd.DataFrame(), {}
     
     try:
         # Standardize features
@@ -287,6 +307,7 @@ def apply_dimensionality_reduction(features_df: pd.DataFrame,
             model = umap.UMAP(n_components=2, 
                             n_neighbors=n_neighbors,
                             min_dist=0.1, 
+                            n_jobs=1,  # Explicit n_jobs=1 to avoid warning when using random_state
                             random_state=random_state)
                             
         elif method.lower() == 'pca':
@@ -304,11 +325,73 @@ def apply_dimensionality_reduction(features_df: pd.DataFrame,
                                index=features_df.index, 
                                columns=['x', 'y'])
         
-        return result_df
+        # Collect model information
+        model_info = {'method': method}
+        
+        # For PCA, extract additional information
+        if method.lower() == 'pca':
+            # Get variance explained by each component
+            variance_explained = model.explained_variance_ratio_
+            model_info['variance_explained'] = {
+                'pc1': float(variance_explained[0]),
+                'pc2': float(variance_explained[1]) if len(variance_explained) > 1 else 0.0,
+                'total': float(variance_explained.sum())
+            }
+            
+            # Get feature loadings (components)
+            feature_names = list(features_df.columns)
+            loadings = model.components_
+            
+            # PC1 and PC2 loadings
+            pc1_loadings = dict(zip(feature_names, loadings[0]))
+            pc2_loadings = dict(zip(feature_names, loadings[1])) if loadings.shape[0] > 1 else {}
+            
+            model_info['loadings'] = {
+                'pc1': pc1_loadings,
+                'pc2': pc2_loadings,
+                'feature_names': feature_names
+            }
+            
+            # Calculate top contributing features for each PC
+            pc1_contributions = [(feature, abs(loading)) for feature, loading in pc1_loadings.items()]
+            pc1_contributions.sort(key=lambda x: x[1], reverse=True)
+            
+            pc2_contributions = [(feature, abs(loading)) for feature, loading in pc2_loadings.items()] if pc2_loadings else []
+            pc2_contributions.sort(key=lambda x: x[1], reverse=True)
+            
+            model_info['top_features'] = {
+                'pc1': pc1_contributions[:3],  # Top 3 features
+                'pc2': pc2_contributions[:3]   # Top 3 features
+            }
+            
+            # Generate interpretation hints
+            def generate_pc_interpretation(loadings, contributions):
+                if not loadings:
+                    return "No data"
+                
+                positive_features = [f for f, l in loadings.items() if l > 0.2]
+                negative_features = [f for f, l in loadings.items() if l < -0.2]
+                
+                interpretation = ""
+                if positive_features:
+                    interpretation += f"Higher: {', '.join(positive_features[:2])}"
+                if negative_features:
+                    if interpretation:
+                        interpretation += " | "
+                    interpretation += f"Lower: {', '.join(negative_features[:2])}"
+                
+                return interpretation or "Mixed factors"
+            
+            model_info['interpretation'] = {
+                'pc1': generate_pc_interpretation(pc1_loadings, pc1_contributions),
+                'pc2': generate_pc_interpretation(pc2_loadings, pc2_contributions)
+            }
+        
+        return result_df, model_info
         
     except Exception as e:
         print(f"Error applying {method}: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(), {}
 
 def generate_clustering_data(region: str) -> Dict[str, Any]:
     """
@@ -360,22 +443,67 @@ def generate_clustering_data(region: str) -> Dict[str, Any]:
             'alpha_count': len(alpha_ids),
         }
         
-        # Method 1: MDS on Correlation Matrix
+        # Method 1: MDS on Correlation Matrix and Advanced Visualizations
         try:
             print("Calculating correlation matrix...")
             corr_matrix = calculate_correlation_matrix(pnl_data)
             
             if not corr_matrix.empty and corr_matrix.shape[0] >= 2:
-                print("Applying MDS to correlation matrix...")
-                mds_coords = mds_on_correlation_matrix(corr_matrix)
-                results['mds_coords'] = mds_coords.to_dict(orient='index')
-                print(f"MDS coordinates calculated for {len(mds_coords)} alphas")
+                # Pre-calculate MDS for all distance metrics
+                distance_metrics = ['simple', 'euclidean', 'angular']
+                
+                for distance_metric in distance_metrics:
+                    print(f"Calculating MDS with {distance_metric} distance...")
+                    mds_coords = mds_on_correlation_matrix(corr_matrix, distance_type=distance_metric)
+                    results[f'mds_coords_{distance_metric}'] = mds_coords.to_dict(orient='index')
+                    print(f"  MDS coordinates calculated for {len(mds_coords)} alphas")
+                
+                # Keep backward compatibility - store default euclidean as 'mds_coords'
+                results['mds_coords'] = results['mds_coords_euclidean']
+                
+                # Pre-calculate Heatmap data (just one version - correlation doesn't change)
+                print("Pre-calculating Heatmap data...")
+                alpha_ids = list(corr_matrix.index)
+                
+                # Store heatmap data (limited to 50 alphas for readability)
+                try:
+                    max_alphas = 50
+                    if len(alpha_ids) > max_alphas:
+                        heatmap_corr = corr_matrix.iloc[:max_alphas, :max_alphas]
+                        heatmap_ids = alpha_ids[:max_alphas]
+                    else:
+                        heatmap_corr = corr_matrix
+                        heatmap_ids = alpha_ids
+                    
+                    # Store single heatmap data (correlation matrix doesn't change)
+                    results['heatmap_data'] = {
+                        'correlation_matrix': heatmap_corr.values.tolist(),
+                        'alpha_ids': heatmap_ids
+                    }
+                    print(f"  Heatmap data stored for {len(heatmap_ids)} alphas")
+                    
+                    # Keep backward compatibility with old structure
+                    for metric in ['simple', 'euclidean', 'angular']:
+                        results[f'heatmap_data_{metric}'] = results['heatmap_data']
+                        
+                except Exception as e:
+                    print(f"  Error storing heatmap data: {e}")
+                    results['heatmap_data'] = {}
+                    for metric in ['simple', 'euclidean', 'angular']:
+                        results[f'heatmap_data_{metric}'] = {}
+                
             else:
-                print("Skipping MDS: Not enough data in correlation matrix")
+                print("Skipping MDS and advanced visualizations: Not enough data in correlation matrix")
                 results['mds_coords'] = {}
+                for metric in ['simple', 'euclidean', 'angular']:
+                    results[f'mds_coords_{metric}'] = {}
+                    results[f'heatmap_data_{metric}'] = {}
         except Exception as e:
-            print(f"Error in MDS calculation: {e}")
+            print(f"Error in correlation-based calculations: {e}")
             results['mds_coords'] = {}
+            for metric in ['simple', 'euclidean', 'angular']:
+                results[f'mds_coords_{metric}'] = {}
+                results[f'heatmap_data_{metric}'] = {}
         
         # Method 2: Dimensionality Reduction on Performance Features
         try:
@@ -391,7 +519,7 @@ def generate_clustering_data(region: str) -> Dict[str, Any]:
                 # Apply different dimensionality reduction techniques
                 try:
                     print("Applying t-SNE...")
-                    tsne_coords = apply_dimensionality_reduction(performance_features, method='tsne')
+                    tsne_coords, tsne_info = apply_dimensionality_reduction(performance_features, method='tsne')
                     results['tsne_coords'] = tsne_coords.to_dict(orient='index')
                     print(f"t-SNE coordinates calculated for {len(tsne_coords)} alphas")
                 except Exception as e:
@@ -399,7 +527,7 @@ def generate_clustering_data(region: str) -> Dict[str, Any]:
                 
                 try:
                     print("Applying UMAP...")
-                    umap_coords = apply_dimensionality_reduction(performance_features, method='umap')
+                    umap_coords, umap_info = apply_dimensionality_reduction(performance_features, method='umap')
                     results['umap_coords'] = umap_coords.to_dict(orient='index')
                     print(f"UMAP coordinates calculated for {len(umap_coords)} alphas")
                 except Exception as e:
@@ -407,8 +535,9 @@ def generate_clustering_data(region: str) -> Dict[str, Any]:
                 
                 try:
                     print("Applying PCA...")
-                    pca_coords = apply_dimensionality_reduction(performance_features, method='pca')
+                    pca_coords, pca_info = apply_dimensionality_reduction(performance_features, method='pca')
                     results['pca_coords'] = pca_coords.to_dict(orient='index')
+                    results['pca_info'] = pca_info  # Store PCA analysis information
                     print(f"PCA coordinates calculated for {len(pca_coords)} alphas")
                 except Exception as e:
                     print(f"Error in PCA calculation: {e}")

@@ -10,9 +10,14 @@ python-dotenv
 Cython
 
 # Dependencies for analysis and visualization
-scikit-learn
+scikit-learn  # Use latest version - 'force_all_finite' warning is sklearn's internal issue
 umap-learn
 dash
 dash-bootstrap-components
 plotly
 tqdm
+networkx
+
+# Production server dependencies (optional - for better performance)
+gunicorn  # Unix/Linux/Mac production server
+waitress  # Windows-compatible production server

@@ -19,8 +19,16 @@ logger = logging.getLogger(__name__)
 # --- SQLAlchemy Engine Setup ---
 try:
     db_connection_str = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-    db_engine = create_engine(db_connection_str)
-    logger.info("SQLAlchemy engine created successfully.")
+    db_engine = create_engine(
+        db_connection_str,
+        pool_size=20,           # Base pool size (increased from default 5)
+        max_overflow=30,        # Overflow connections (increased from default 10)  
+        pool_pre_ping=True,     # Validate connections before use
+        pool_recycle=3600,      # Recycle connections every hour
+        echo=False,             # Set to True for SQL debugging
+        connect_args={"options": "-c timezone=utc"}  # Set timezone for consistency
+    )
+    logger.info("SQLAlchemy engine created successfully with enhanced connection pooling.")
 except Exception as e:
     logger.error(f"Failed to create SQLAlchemy engine: {e}")
     # Depending on desired behavior, you might want to raise this or exit
@@ -296,9 +304,26 @@ def init_analysis_schema() -> None:
                     operators_nominal JSONB,
                     datafields_unique JSONB,
                     datafields_nominal JSONB,
+                    excluded BOOLEAN DEFAULT FALSE,
+                    exclusion_reason TEXT,
                     last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(alpha_id)
                 )
+                """)
+                
+                # Add missing columns if they don't exist (migration for existing databases)
+                cursor.execute("""
+                DO $$ 
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name='alpha_analysis_cache' AND column_name='excluded') THEN
+                        ALTER TABLE alpha_analysis_cache ADD COLUMN excluded BOOLEAN DEFAULT FALSE;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+                                  WHERE table_name='alpha_analysis_cache' AND column_name='exclusion_reason') THEN
+                        ALTER TABLE alpha_analysis_cache ADD COLUMN exclusion_reason TEXT;
+                    END IF;
+                END $$;
                 """)
                 
                 # Create analysis summary table for aggregated results
@@ -326,7 +351,35 @@ def init_analysis_schema() -> None:
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_summary_item ON analysis_summary (item_name)")
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_analysis_summary_filters ON analysis_summary (region_id, universe, delay, alpha_type)")
                 
-                logger.info("Alpha analysis database schema initialized successfully")
+                # Additional performance indexes for common query patterns
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_alphas_region_universe ON alphas (region_id, universe)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_alphas_region_delay ON alphas (region_id, delay)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_alphas_code_notnull ON alphas (alpha_id) WHERE code IS NOT NULL AND code != ''")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_alphas_date_added ON alphas (date_added)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_alphas_composite_filters ON alphas (region_id, universe, delay, alpha_type) WHERE code IS NOT NULL")
+                
+                # Create slim datafields table with only 6 essential columns
+                cursor.execute("""
+                CREATE TABLE IF NOT EXISTS datafields (
+                    datafield_id VARCHAR(255),
+                    dataset_id VARCHAR(255),
+                    data_category VARCHAR(255),
+                    data_type VARCHAR(50),
+                    delay INTEGER,
+                    region VARCHAR(10),
+                    data_description TEXT,
+                    PRIMARY KEY (datafield_id, region)
+                )
+                """)
+                
+                # Create indexes for common datafield query patterns
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_datafields_dataset_id ON datafields(dataset_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_datafields_data_category ON datafields(data_category)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_datafields_data_type ON datafields(data_type)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_datafields_delay ON datafields(delay)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_datafields_region ON datafields(region)")
+                
+                logger.info("Alpha analysis database schema initialized successfully (including datafields table)")
     except psycopg2.Error as e:
         logger.error(f"Error initializing analysis schema: {e}")
         raise

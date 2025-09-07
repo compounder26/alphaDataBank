@@ -15,7 +15,7 @@ from multiprocessing.pool import ThreadPool
 from functools import partial
 
 import tqdm
-from helpful_functions import save_simulation_result, set_alpha_properties, save_pnl, save_yearly_stats, get_alpha_pnl, get_alpha_yearly_stats
+from legacy.helpful_functions import save_simulation_result, set_alpha_properties, save_pnl, save_yearly_stats, get_alpha_pnl, get_alpha_yearly_stats
 
 DEFAULT_CONFIG = {
     "get_pnl": False,
@@ -30,9 +30,10 @@ DEFAULT_CONFIG = {
 
 brain_api_url = os.environ.get("BRAIN_API_URL", "https://api.worldquantbrain.com")
 
-# Define the path to the 'secrets' folder in the same directory as this script
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SECRETS_DIR = os.path.join(BASE_DIR, "secrets")
+# Define the path to the 'secrets' folder in the project root
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # This is now legacy/
+PROJECT_ROOT = os.path.dirname(BASE_DIR)  # Go up one level to project root
+SECRETS_DIR = os.path.join(PROJECT_ROOT, "secrets")
 COOKIE_FILE_PATH = os.path.join(SECRETS_DIR, "session_cookies.json")
 CREDENTIALS_FILE_PATH = os.path.join(SECRETS_DIR, "platform-brain.json")
 
@@ -71,10 +72,27 @@ def check_session_timeout(session):
     Returns the remaining time before expiration.
     """
     try:
-        result = session.get(brain_api_url + "/authentication").json()
-        expiry = result.get("token", {}).get("expiry", 0)
-        print(f"Session timeout check: {expiry} seconds remaining")
-        return expiry
+        response = session.get(brain_api_url + "/authentication")
+        
+        # Handle different response codes
+        if response.status_code == 200:
+            result = response.json()
+            expiry = result.get("token", {}).get("expiry", 0)
+            print(f"Session timeout check: {expiry} seconds remaining")
+            return expiry
+        elif response.status_code == 204:
+            # 204 No Content - authentication might be pending
+            print("Session check returned 204 (authentication pending)")
+            return 0
+        elif response.status_code == 401:
+            print("Session expired (401 Unauthorized)")
+            return 0
+        else:
+            print(f"Unexpected status code: {response.status_code}")
+            return 0
+    except json.JSONDecodeError:
+        print("Failed to decode JSON response from authentication check")
+        return 0
     except Exception as e:
         print(f"Error checking session timeout: {e}")
         return 0
@@ -93,7 +111,8 @@ def authenticate_existing_session(s):
     load_cookies(s)  # Load cookies if available
     
     # Check if the session cookies are still valid
-    if check_session_timeout(s) > 0:
+    timeout_remaining = check_session_timeout(s)
+    if timeout_remaining > 0:
         print("Reusing existing session...")
         return s
     
@@ -122,8 +141,24 @@ def authenticate_existing_session(s):
             s.auth = get_credentials()
             return authenticate_existing_session(s)
     
-    # Save the session cookies after successful authentication
-    save_cookies(s)
+    # After authentication, verify the session is actually valid before saving cookies
+    # Wait a bit for authentication to complete
+    time.sleep(2)
+    
+    # Verify the session is truly authenticated
+    max_verify_attempts = 3
+    for attempt in range(max_verify_attempts):
+        timeout_check = check_session_timeout(s)
+        if timeout_check > 0:
+            print(f"Authentication successful! Session valid for {timeout_check} seconds")
+            save_cookies(s)
+            return s
+        elif attempt < max_verify_attempts - 1:
+            print(f"Authentication still pending... waiting (attempt {attempt + 1}/{max_verify_attempts})")
+            time.sleep(3)
+    
+    print("Warning: Authentication completed but session validation is pending. Cookies saved for retry.")
+    save_cookies(s)  # Save cookies anyway for next attempt
     return s
 
 
@@ -138,18 +173,6 @@ def start_session():
     s.mount('http://', adapter)
     s.mount('https://', adapter)
     return authenticate_existing_session(s)  # Use the common authentication function
-
-def check_session_timeout(s):
-    """
-    Function checks session time out
-    """
-
-    authentication_url = brain_api_url + "/authentication"
-    try:
-        result = s.get(authentication_url).json()["token"]["expiry"]
-        return result
-    except:
-        return 0
 
 
 def generate_alpha(

@@ -4,17 +4,24 @@ env/
 .venv/
 
 # Secrets and Authentication
-secrets/
+# Ignore sensitive files in secrets directory, but track the directory and example file
+secrets/platform-brain.json
+secrets/session_cookies.json
+secrets/*.key
+secrets/*.pem
+secrets/*.p12
+secrets/*.pfx
+!secrets/platform-brain.json.example
+!secrets/.gitkeep
 *.key
 *.pem
 *.p12
 *.pfx
 .env
-.env.*
-*credential*
-*secret*
-platform-brain.json
-session_cookies.json
+.env.local
+.env.production
+.env.development
+!.env.example
 
 # Python Cache
 __pycache__/
@@ -57,3 +64,15 @@ Thumbs.db
 
 # Analysis output
 analysis/clustering/*.json
+
+# Data directory - ignore contents but keep directory
+data/*
+!data/.gitkeep
+
+# Claude Code configuration and documentation
+CLAUDE.md
+.claude/
+
+# Refactoring documentation (temporary work files)
+REFACTORING_SUMMARY.md
+REFACTORING_COMPLETE.md
