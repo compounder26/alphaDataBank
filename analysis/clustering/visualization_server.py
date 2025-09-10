@@ -12,6 +12,8 @@ import argparse
 import webbrowser
 import threading
 import time
+import logging
+import math
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
@@ -33,6 +35,9 @@ from sqlalchemy import text
 import scipy.cluster.hierarchy as sch
 from scipy.spatial.distance import squareform
 import networkx as nx
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Import advanced clustering methods
 try:
@@ -453,7 +458,10 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                             children=[html.Div(id="analysis-summary")]
                         )
                     ])
-                ])
+                ]),
+                
+                # Conditional treemap information panels (only shown in treemap view)
+                html.Div(id='treemap-sidebar-info', children=[], className="mt-3")
             ], width=3),
             
             # Main analysis content
@@ -960,14 +968,48 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                 temp_analysis_ops = create_analysis_operations()
                 results = temp_analysis_ops.get_analysis_summary(region, universe, delay, date_from, date_to)
             
+            # Add filter information to results metadata
+            if 'metadata' not in results:
+                results['metadata'] = {}
+            results['metadata']['filters'] = {
+                'region': region,
+                'universe': universe,
+                'delay': delay,
+                'date_from': date_from,
+                'date_to': date_to
+            }
+            
             # Create summary
             metadata = results.get('metadata', {})
             total_alphas = metadata.get('total_alphas', 0)
             
-            summary = dbc.ListGroup([
+            # Show filter information in summary if filters are applied
+            filter_info = []
+            if region:
+                filter_info.append(f"Region: {region}")
+            if universe:
+                filter_info.append(f"Universe: {universe}")
+            if delay is not None:
+                filter_info.append(f"Delay: {delay}")
+            if date_from or date_to:
+                date_range = f"{date_from or 'start'} to {date_to or 'end'}"
+                filter_info.append(f"Date range: {date_range}")
+            
+            summary_items = [
                 dbc.ListGroupItem([
                     html.Strong(f"Total Alphas: {total_alphas}")
-                ]),
+                ])
+            ]
+            
+            if filter_info:
+                summary_items.append(
+                    dbc.ListGroupItem([
+                        html.Strong("Active Filters: "),
+                        html.Small(", ".join(filter_info), className="text-muted")
+                    ])
+                )
+            
+            summary_items.extend([
                 dbc.ListGroupItem([
                     html.Strong("Top Operators:"),
                     html.Ul([
@@ -982,7 +1024,9 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                         for df, count in results.get('datafields', {}).get('top_datafields', [])[:5]
                     ])
                 ])
-            ], flush=True)
+            ])
+            
+            summary = dbc.ListGroup(summary_items, flush=True)
             
             return results, summary
         except Exception as e:
@@ -1313,7 +1357,8 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                     options=[
                         {'label': 'Top 20 Most Used', 'value': 'top20'},
                         {'label': 'All Used Datafields', 'value': 'all'},
-                        {'label': 'All Used Datasets', 'value': 'datasets'}
+                        {'label': 'All Used Datasets', 'value': 'datasets'},
+                        {'label': 'Dataset Treemap', 'value': 'treemap'}
                     ],
                     value=view_mode,
                     inline=True
@@ -1325,6 +1370,8 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
             return html.Div([view_selector, create_all_datafields_content(analysis_data)])
         elif view_mode == 'datasets':
             return html.Div([view_selector, create_all_datasets_content(analysis_data)])
+        elif view_mode == 'treemap':
+            return html.Div([view_selector, create_dataset_treemap_content(analysis_data)])
         else:
             return html.Div([view_selector, create_top20_datafields_content(analysis_data)])
     
@@ -1335,6 +1382,17 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
     )
     def update_datafields_view_mode(selected_mode):
         return selected_mode
+    
+    # Callback to conditionally show treemap information in sidebar
+    @app.callback(
+        Output('treemap-sidebar-info', 'children'),
+        [Input('datafields-view-selector', 'value'),
+         Input('analysis-data', 'data')]
+    )
+    def update_treemap_sidebar_info(view_mode, analysis_data):
+        if view_mode == 'treemap' and analysis_data:
+            return get_dataset_treemap_sidebar_info(analysis_data)
+        return []
     
     def create_all_datafields_content(analysis_data):
         """Create view showing all used datafields with their counts."""
@@ -1533,12 +1591,11 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
             fig2 = px.pie(
                 values=list(category_counts.values()),
                 names=truncated_names,
-                title="Usage by Category",
                 template=TEMPLATE
             )
             fig2.update_layout(
-                height=300,
-                font=dict(size=10),
+                height=350,
+                font=dict(size=12),
                 showlegend=True,
                 legend=dict(
                     orientation="v",
@@ -1578,9 +1635,13 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
             )
             fig3.update_traces(
                 textinfo="label+value",
-                textposition="middle center"
+                textposition="middle center",
+                textfont=dict(size=18)  # 2x bigger font (was ~9-10, now 18)
             )
-            fig3.update_layout(height=450)
+            fig3.update_layout(
+                height=450,
+                font=dict(size=16)  # Increase general font size too
+            )
         else:
             print("WARNING: dataset_counts is empty - treemap will be empty")
             fig3 = go.Figure()
@@ -1628,7 +1689,7 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                             html.Strong(f"Total Region-Specific Datafields: "),
                             html.Span(f"{total_region_specific_dfs:,}", className="badge bg-secondary ms-2"),
                             html.Br(),
-                            html.Small("(unique datafield-region-delay combinations)", className="text-muted")
+                            html.Small("(unique datafield-region combinations)", className="text-muted")
                         ]),
                         dbc.ListGroupItem([
                             html.Strong(f"Total Datafield Instances: "),
@@ -1641,6 +1702,10 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
                         dbc.ListGroupItem([
                             html.Strong(f"Dataset Categories: "),
                             html.Span(f"{len(category_counts)}", className="badge bg-warning ms-2")
+                        ]),
+                        dbc.ListGroupItem([
+                            html.Strong(f"Total Datasets Used: "),
+                            html.Span(f"{len(dataset_counts)}", className="badge bg-dark ms-2")
                         ])
                     ], flush=True)
                 ], style={
@@ -1733,6 +1798,408 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None, operators_li
         ])
         
         return main_content
+    
+    def calculate_dataset_statistics(analysis_data, region=None, universe=None, delay=None, date_from=None, date_to=None):
+        """
+        Calculate comprehensive dataset statistics including total datafield counts
+        and usage patterns for treemap visualization.
+        
+        Args:
+            analysis_data: The analysis data containing datafields information
+            region: Optional region filter
+            universe: Optional universe filter  
+            delay: Optional delay filter
+            date_from: Optional start date filter
+            date_to: Optional end date filter
+            
+        Returns:
+            dict: Contains dataset usage, availability, and statistics
+        """
+        try:
+            temp_analysis_ops = create_analysis_operations()
+            
+            # If filters are provided, get fresh filtered data instead of using cached analysis_data
+            if any([region, universe, delay, date_from, date_to]):
+                print(f"Applying filters to dataset statistics: region={region}, universe={universe}, delay={delay}")
+                filtered_results = temp_analysis_ops.get_analysis_summary(region, universe, delay, date_from, date_to)
+                datafields_data = filtered_results.get('datafields', {})
+            else:
+                # Use existing cached data
+                datafields_data = analysis_data.get('datafields', {})
+                
+            unique_usage = datafields_data.get('unique_usage', {})
+            
+            # Track dataset usage (from used alphas) and total datafields per dataset
+            dataset_alpha_usage = {}  # {dataset_id: set_of_alpha_ids}
+            dataset_total_datafields = {}  # {dataset_id: total_datafield_count}
+            dataset_used_datafields = {}  # {dataset_id: count_of_used_datafields}
+            
+            # Calculate used datafields per dataset
+            for df, alphas in unique_usage.items():
+                if df in temp_analysis_ops.parser.datafields:
+                    dataset_id = temp_analysis_ops.parser.datafields[df]['dataset_id']
+                    if dataset_id:
+                        if dataset_id not in dataset_alpha_usage:
+                            dataset_alpha_usage[dataset_id] = set()
+                        dataset_alpha_usage[dataset_id].update(alphas)
+                        
+                        dataset_used_datafields[dataset_id] = dataset_used_datafields.get(dataset_id, 0) + 1
+                else:
+                    # Fallback: extract dataset from datafield name
+                    if '.' in df:
+                        dataset_id = df.split('.')[0]
+                        if dataset_id not in dataset_alpha_usage:
+                            dataset_alpha_usage[dataset_id] = set()
+                        dataset_alpha_usage[dataset_id].update(alphas)
+                        dataset_used_datafields[dataset_id] = dataset_used_datafields.get(dataset_id, 0) + 1
+            
+            # Calculate total datafields per dataset, respecting region filter
+            if region:
+                # Get region-specific datafields directly from database
+                print(f"Querying database for datafields available in region: {region}")
+                try:
+                    db_engine = temp_analysis_ops._get_db_engine()
+                    with db_engine.connect() as connection:
+                        from sqlalchemy import text
+                        query = text("""
+                            SELECT datafield_id, dataset_id 
+                            FROM datafields 
+                            WHERE region = :region 
+                            AND dataset_id IS NOT NULL 
+                            AND dataset_id != ''
+                            AND datafield_id IS NOT NULL
+                            AND datafield_id != ''
+                        """)
+                        result = connection.execute(query, {"region": region})
+                        
+                        for row in result:
+                            dataset_id = row.dataset_id
+                            if dataset_id:
+                                dataset_total_datafields[dataset_id] = dataset_total_datafields.get(dataset_id, 0) + 1
+                        
+                        print(f"Region {region}: Found {len(dataset_total_datafields)} datasets with datafields")
+                        print(f"Top 10 datasets by datafield count: {sorted(dataset_total_datafields.items(), key=lambda x: x[1], reverse=True)[:10]}")
+                        
+                except Exception as e:
+                    print(f"Error querying region-specific datafields: {e}")
+                    logger.error(f"Error querying region-specific datafields: {e}")
+                    # Fallback: try to use all datafields from parser (not region-specific)
+                    for df, info in temp_analysis_ops.parser.datafields.items():
+                        dataset_id = info.get('dataset_id')
+                        if dataset_id:
+                            dataset_total_datafields[dataset_id] = dataset_total_datafields.get(dataset_id, 0) + 1
+                    print(f"Fallback: Using all datafields from parser, found {len(dataset_total_datafields)} datasets")
+            else:
+                # No region filter - get all datafields from parser
+                print("No region filter: Using all datafields from parser")
+                for df, info in temp_analysis_ops.parser.datafields.items():
+                    dataset_id = info.get('dataset_id')
+                    if dataset_id:
+                        dataset_total_datafields[dataset_id] = dataset_total_datafields.get(dataset_id, 0) + 1
+                print(f"No filter: Found {len(dataset_total_datafields)} total datasets")
+            
+            # Create comprehensive dataset statistics
+            # Include ALL datasets that have datafields available (regardless of alpha usage)
+            dataset_stats = []
+            
+            # When filtering is applied, we want to show all datasets with available datafields in that region
+            # When no filtering, we show all datasets that either have datafields OR have been used by alphas
+            if any([region, universe, delay, date_from, date_to]):
+                # Filter mode: Show all datasets with datafields available in the filtered region
+                all_datasets = set(dataset_total_datafields.keys())
+                print(f"Filter mode: Found {len(all_datasets)} datasets with datafields available in region {region}")
+            else:
+                # No filter: Show all datasets (both used and available)
+                all_datasets = set(dataset_total_datafields.keys()) | set(dataset_alpha_usage.keys())
+                print(f"No filter mode: Found {len(all_datasets)} total datasets")
+            
+            for dataset_id in all_datasets:
+                total_datafields = dataset_total_datafields.get(dataset_id, 0)
+                used_datafields = dataset_used_datafields.get(dataset_id, 0)
+                alpha_usage_count = len(dataset_alpha_usage.get(dataset_id, set()))
+                usage_percentage = (used_datafields / total_datafields * 100) if total_datafields > 0 else 0
+                
+                # Only include datasets that have datafields available (total_datafields > 0)
+                if total_datafields > 0:
+                    dataset_stats.append({
+                        'dataset_id': dataset_id,
+                        'total_datafields': total_datafields,
+                        'used_datafields': used_datafields,
+                        'alpha_usage_count': alpha_usage_count,
+                        'usage_percentage': usage_percentage,
+                        'is_used': alpha_usage_count > 0
+                    })
+            
+            print(f"Final dataset_stats count: {len(dataset_stats)} (used: {len([d for d in dataset_stats if d['is_used']])}, unused: {len([d for d in dataset_stats if not d['is_used']])})")
+            
+            # Sort by total datafields (size)
+            dataset_stats.sort(key=lambda x: x['total_datafields'], reverse=True)
+            
+            return {
+                'dataset_stats': dataset_stats,
+                'total_datasets': len(dataset_stats),  # Use actual dataset_stats count
+                'used_datasets': len([d for d in dataset_stats if d['is_used']]),
+                'unused_datasets': len([d for d in dataset_stats if not d['is_used']]),
+                'dataset_alpha_usage': dataset_alpha_usage
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating dataset statistics: {e}")
+            return {
+                'dataset_stats': [],
+                'total_datasets': 0,
+                'used_datasets': 0,
+                'unused_datasets': 0,
+                'dataset_alpha_usage': {},
+                'error': str(e)
+            }
+    
+    def create_dataset_treemap_content(analysis_data):
+        """Create enhanced treemap view showing datasets with usage patterns."""
+        # Extract filter information from analysis_data metadata (if available)
+        metadata = analysis_data.get('metadata', {})
+        filters = metadata.get('filters', {})
+        region = filters.get('region')
+        universe = filters.get('universe') 
+        delay = filters.get('delay')
+        date_from = filters.get('date_from')
+        date_to = filters.get('date_to')
+        
+        # Calculate statistics with filter parameters
+        dataset_info = calculate_dataset_statistics(analysis_data, region, universe, delay, date_from, date_to)
+        
+        if 'error' in dataset_info:
+            return html.Div(f"Error loading dataset data: {dataset_info['error']}", 
+                          className="text-danger text-center p-4")
+        
+        dataset_stats = dataset_info['dataset_stats']
+        if not dataset_stats:
+            return html.Div("No dataset data available", className="text-muted text-center p-4")
+        
+        # Use all datasets (not limited to 50)
+        all_stats = dataset_stats
+        
+        # Calculate total area for text display threshold
+        total_datafields = sum([stat['total_datafields'] for stat in all_stats])
+        
+        # Create enhanced color mapping based on alpha usage
+        max_usage = max([d['alpha_usage_count'] for d in all_stats]) if all_stats else 1
+        colors = []
+        text_info = []
+        
+        for stat in all_stats:
+            # Enhanced color mapping
+            if stat['alpha_usage_count'] == 0:
+                colors.append('#808080')  # Grey for unused datasets
+            else:
+                usage_count = stat['alpha_usage_count']
+                if usage_count <= 5:
+                    # Light blue to medium blue for 1-5 alphas
+                    intensity = usage_count / 5
+                    blue_val = int(200 - (intensity * 50))  # 200 to 150
+                    colors.append(f'rgb(100, 150, {blue_val})')
+                elif usage_count <= 20:
+                    # Medium blue to dark blue for 6-20 alphas
+                    intensity = (usage_count - 5) / 15
+                    blue_val = int(150 - (intensity * 50))  # 150 to 100
+                    colors.append(f'rgb(80, 130, {blue_val})')
+                else:
+                    # Dark blue to purple for 20+ alphas
+                    intensity = min((usage_count - 20) / 30, 1.0)  # Cap at 50 alphas for color scaling
+                    red_val = int(80 + (intensity * 50))  # 80 to 130
+                    blue_val = int(100 - (intensity * 30))  # 100 to 70
+                    colors.append(f'rgb({red_val}, 100, {blue_val})')
+            
+            # Smart text display based on dataset size
+            area_percentage = (stat['total_datafields'] / total_datafields * 100) if total_datafields > 0 else 0
+            
+            if area_percentage >= 2.0:  # Large datasets - show full info
+                text_info.append(f"{stat['dataset_id']}<br>{stat['alpha_usage_count']} alphas")
+            elif area_percentage >= 0.8:  # Medium datasets - show abbreviated info  
+                text_info.append(f"{stat['dataset_id']}<br>{stat['alpha_usage_count']}")
+            elif area_percentage >= 0.3:  # Small datasets - show only ID
+                text_info.append(stat['dataset_id'])
+            else:  # Very small datasets - no text
+                text_info.append("")
+        
+        # Create custom hover text with detailed info
+        hover_text = []
+        for stat in all_stats:
+            hover_info = (
+                f"<b>{stat['dataset_id']}</b><br>"
+                f"Total Datafields: {stat['total_datafields']}<br>"
+                f"Used Datafields: {stat['used_datafields']}<br>"
+                f"Usage Rate: {stat['usage_percentage']:.1f}%<br>"
+                f"Alphas Using: {stat['alpha_usage_count']}<br>"
+                f"Status: {'Used' if stat['is_used'] else 'Unused'}"
+            )
+            hover_text.append(hover_info)
+        
+        # Apply scaling to improve visibility of all datasets
+        # Use square root scaling to reduce extreme differences while maintaining relative proportions
+        min_size = 20  # Minimum size to ensure all datasets are visible
+        scaled_values = []
+        max_datafields = max([stat['total_datafields'] for stat in all_stats]) if all_stats else 1
+        
+        for stat in all_stats:
+            # Square root scaling with minimum size guarantee
+            raw_value = stat['total_datafields']
+            if raw_value == 0:
+                scaled_value = min_size
+            else:
+                # Scale: sqrt for better distribution + minimum size
+                scaled_value = max(math.sqrt(raw_value) * 10, min_size)
+            scaled_values.append(scaled_value)
+        
+        # Update text thresholds based on scaled values instead of raw percentages
+        total_scaled = sum(scaled_values)
+        improved_text_info = []
+        
+        for i, stat in enumerate(all_stats):
+            scaled_percentage = (scaled_values[i] / total_scaled * 100) if total_scaled > 0 else 0
+            
+            if scaled_percentage >= 1.5:  # Large scaled areas - show full info
+                improved_text_info.append(f"{stat['dataset_id']}<br>{stat['alpha_usage_count']} alphas")
+            elif scaled_percentage >= 0.8:  # Medium scaled areas - show abbreviated info  
+                improved_text_info.append(f"{stat['dataset_id']}<br>{stat['alpha_usage_count']}")
+            elif scaled_percentage >= 0.4:  # Small scaled areas - show only ID
+                improved_text_info.append(stat['dataset_id'])
+            else:  # Very small scaled areas - abbreviated ID
+                dataset_id = stat['dataset_id']
+                if len(dataset_id) > 8:
+                    improved_text_info.append(dataset_id[:8] + "...")
+                else:
+                    improved_text_info.append(dataset_id)
+        
+        # Create treemap with scaled values
+        fig = go.Figure(go.Treemap(
+            labels=[stat['dataset_id'] for stat in all_stats],
+            values=scaled_values,  # Use scaled values instead of raw counts
+            parents=["" for _ in all_stats],  # All at root level
+            text=improved_text_info,  # Improved text display based on scaled size
+            textinfo="text",
+            textposition="middle center",
+            textfont=dict(size=18, color="white", family="Arial Black"),  # 2x bigger font for better visibility
+            marker=dict(
+                colors=colors,
+                line=dict(width=1, color="white")  # White borders for better separation
+            ),
+            hovertemplate='%{customdata}<extra></extra>',
+            customdata=hover_text,
+            maxdepth=1
+        ))
+        
+        fig.update_layout(
+            title={
+                'text': f"Dataset Treemap: Size=Datafield Count (scaled), Color=Alpha Usage (All {len(all_stats)} datasets)",
+                'x': 0.5,
+                'xanchor': 'center',
+                'font': {'size': 20}
+            },
+            height=7500,  # Increased height to utilize more vertical space
+            font=dict(size=20),
+            template=TEMPLATE,
+            margin=dict(t=80, l=10, r=10, b=10),  # Maximize plot area
+            uniformtext=dict(minsize=8, mode='hide')  # Hide text if too small to read
+        )
+        
+        # Return just the treemap graph for full-width display
+        return dcc.Graph(id='dataset-treemap-main', figure=fig, style={'height': '7500px'})
+    
+    def get_dataset_treemap_sidebar_info(analysis_data):
+        """Get sidebar information panels for the dataset treemap view."""
+        # Extract filter information from analysis_data metadata (if available)
+        metadata = analysis_data.get('metadata', {})
+        filters = metadata.get('filters', {})
+        region = filters.get('region')
+        universe = filters.get('universe') 
+        delay = filters.get('delay')
+        date_from = filters.get('date_from')
+        date_to = filters.get('date_to')
+        
+        # Calculate statistics with filter parameters
+        dataset_info = calculate_dataset_statistics(analysis_data, region, universe, delay, date_from, date_to)
+        
+        if 'error' in dataset_info:
+            return []
+        
+        dataset_stats = dataset_info['dataset_stats']
+        if not dataset_stats:
+            return []
+        
+        # Create statistics panel
+        stats_panel = dbc.Card([
+            dbc.CardHeader("📊 Dataset Statistics"),
+            dbc.CardBody([
+                dbc.ListGroup([
+                    dbc.ListGroupItem([
+                        html.Strong("Total Datasets: "),
+                        html.Span(f"{dataset_info['total_datasets']}", className="badge bg-primary ms-2")
+                    ]),
+                    dbc.ListGroupItem([
+                        html.Strong("Datasets with Alpha Usage: "),
+                        html.Span(f"{dataset_info['used_datasets']}", className="badge bg-success ms-2")
+                    ]),
+                    dbc.ListGroupItem([
+                        html.Strong("Unused Datasets: "),
+                        html.Span(f"{dataset_info['unused_datasets']}", className="badge bg-secondary ms-2")
+                    ]),
+                    dbc.ListGroupItem([
+                        html.Strong("Usage Rate: "),
+                        html.Span(f"{(dataset_info['used_datasets'] / dataset_info['total_datasets'] * 100):.1f}%" if dataset_info['total_datasets'] > 0 else "0%", 
+                                className="badge bg-info ms-2")
+                    ])
+                ], flush=True, className="mb-3"),
+                
+                html.Hr(),
+                html.H6("🎯 Top Used Datasets"),
+                dbc.ListGroup([
+                    dbc.ListGroupItem([
+                        html.Strong(f"{stat['dataset_id']}: "),
+                        html.Span(f"{stat['alpha_usage_count']} alphas", className="me-2"),
+                        html.Span(f"({stat['used_datafields']}/{stat['total_datafields']} fields)", 
+                                className="text-muted small")
+                    ]) for stat in [d for d in dataset_stats if d['is_used']][:10]
+                ], flush=True) if any(d['is_used'] for d in dataset_stats) else html.Div("No used datasets found", className="text-muted")
+            ])
+        ], className="mb-3")
+        
+        # Create legend panel
+        legend_panel = dbc.Card([
+            dbc.CardHeader("🎨 Legend"),
+            dbc.CardBody([
+                html.Div([
+                    html.Div([
+                        html.Div(style={
+                            'width': '20px', 'height': '20px', 'background-color': '#808080',
+                            'display': 'inline-block', 'margin-right': '10px', 'border': '1px solid #ccc'
+                        }),
+                        html.Span("Unused datasets (no alphas)", style={'vertical-align': 'top'})
+                    ], className="mb-2"),
+                    html.Div([
+                        html.Div(style={
+                            'width': '20px', 'height': '20px', 
+                            'background': 'linear-gradient(to right, rgb(100,150,200), rgb(130,100,70))',
+                            'display': 'inline-block', 'margin-right': '10px', 'border': '1px solid #ccc'
+                        }),
+                        html.Span("Used datasets (color by alpha count)", style={'vertical-align': 'top'})
+                    ], className="mb-2")
+                ]),
+                html.Hr(),
+                html.H6("💡 Usage Tips"),
+                dbc.Alert([
+                    html.Ul([
+                        html.Li("Size of each rectangle = Total datafields in dataset"),
+                        html.Li("Color = Alpha usage (grey = unused, blue-purple gradient = used)"),
+                        html.Li("Text shown only for larger datasets to avoid clutter"),
+                        html.Li("Hover for detailed statistics on all datasets"),
+                        html.Li("Click to zoom in on individual datasets")
+                    ], className="mb-0")
+                ], color="light")
+            ])
+        ])
+        
+        return [stats_panel, legend_panel]
     
     def create_cross_analysis_content(analysis_data):
         """Create cross-analysis content with datafield recommendations."""

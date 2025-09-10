@@ -80,3 +80,10 @@ REFACTORING_COMPLETE.md
 sliced_pdfs
 
 ENHANCED_CLUSTERING_README.md
+
+# Personal analysis scripts
+alpha_pie_charts.py
+convert_html_to_png.py
+*_pie_charts.html
+*_alphas_by_*.png
+*_alphas_by_*.html

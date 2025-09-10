@@ -254,10 +254,11 @@ def calculate_all_features(pnl_data_dict: Dict[str, Dict[str, pd.DataFrame]],
     print("Calculating comprehensive feature matrix with enhanced methods...")
     
     # Use the enhanced feature engineering (disable spiked covariance - known to cause issues)
+    # Disable multiscale features as they were causing temporal clustering rather than risk-based clustering
     enhanced_features = create_enhanced_feature_matrix(
         pnl_data_dict,
         include_spiked_cov=False,  # DISABLED: Complex PCA-based features causing artificial patterns
-        include_multiscale=True, 
+        include_multiscale=False,  # DISABLED: Temporal volatility features removed by user request
         include_risk_metrics=True
     )
     
@@ -269,10 +270,22 @@ def calculate_all_features(pnl_data_dict: Dict[str, Dict[str, pd.DataFrame]],
     if not alpha_metadata.empty:
         for alpha_id in enhanced_features.index:
             if alpha_id in alpha_metadata.index:
+                # Add categorical metadata features
                 for feature in ['is_sharpe', 'is_drawdown', 'is_returns']:
                     if feature in alpha_metadata.columns:
                         metadata_feature_name = f'metadata_{feature.replace("is_", "")}'  
                         enhanced_features.loc[alpha_id, metadata_feature_name] = alpha_metadata.loc[alpha_id, feature]
+                
+                # Add numerical metadata features
+                for feature in ['turnover_ratio', 'margin', 'fitness']:
+                    if feature in alpha_metadata.columns:
+                        metadata_feature_name = f'metadata_{feature}'
+                        value = alpha_metadata.loc[alpha_id, feature]
+                        # Handle potential non-numeric values
+                        if pd.notna(value) and isinstance(value, (int, float)):
+                            enhanced_features.loc[alpha_id, metadata_feature_name] = float(value)
+                        else:
+                            enhanced_features.loc[alpha_id, metadata_feature_name] = np.nan
     
     # Fill any remaining NaN values with feature medians (more robust than means)
     enhanced_features = enhanced_features.fillna(enhanced_features.median())
@@ -287,7 +300,7 @@ def calculate_all_features(pnl_data_dict: Dict[str, Dict[str, pd.DataFrame]],
     
     print(f"  Feature breakdown:")
     print(f"    - Spiked covariance: {len(spiked_features)} features")
-    print(f"    - Multi-scale temporal: {len(multiscale_features)} features")
+    print(f"    - Multi-scale temporal: {len(multiscale_features)} features (DISABLED)")
     print(f"    - Advanced risk metrics: {len(risk_features)} features")
     print(f"    - Metadata: {len(metadata_features)} features")
     
@@ -1567,7 +1580,7 @@ def main(region: str = 'USA'):
             categories = results['feature_categories']
             print(f"Feature Breakdown:")
             print(f"  - Spiked covariance: {categories.get('spiked', 0)} features")
-            print(f"  - Multi-scale temporal: {categories.get('multiscale', 0)} features")  
+            print(f"  - Multi-scale temporal: {categories.get('multiscale', 0)} features (DISABLED)")  
             print(f"  - Advanced risk metrics: {categories.get('risk', 0)} features")
             print(f"  - Metadata: {categories.get('metadata', 0)} features")
         

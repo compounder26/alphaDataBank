@@ -64,6 +64,64 @@ class AlphaExpressionParser:
         # Create symbol patterns
         self.symbol_patterns = self._create_symbol_patterns()
     
+    def _filter_operators(self, operators_data: List[Dict]) -> List[Dict]:
+        """
+        Filter operators based on scope and category.
+        
+        Exclude operators that:
+        1. Have category == "Special"
+        2. Have scope containing only "COMBO" 
+        3. Have scope containing only "SELECTION"
+        
+        Args:
+            operators_data: List of operator dictionaries with name, scope, category
+            
+        Returns:
+            Filtered list of operator dictionaries
+        """
+        filtered_operators = []
+        excluded_count = 0
+        excluded_reasons = {"Special": 0, "OnlyCOMBO": 0, "OnlySELECTION": 0}
+        
+        for op in operators_data:
+            scope = op.get('scope', [])
+            category = op.get('category', '')
+            name = op.get('name', '')
+            
+            # Exclusion logic
+            should_exclude = False
+            reason = None
+            
+            # Check for Special category
+            if category == "Special":
+                should_exclude = True
+                reason = "Special"
+            # Check for operators with only COMBO scope
+            elif scope == ["COMBO"]:
+                should_exclude = True
+                reason = "OnlyCOMBO"
+            # Check for operators with only SELECTION scope
+            elif scope == ["SELECTION"]:
+                should_exclude = True
+                reason = "OnlySELECTION"
+            
+            if should_exclude:
+                excluded_count += 1
+                excluded_reasons[reason] += 1
+                logger.debug(f"Excluding operator '{name}' - {reason}")
+            else:
+                filtered_operators.append(op)
+        
+        logger.info(f"Operator filtering results:")
+        logger.info(f"  Original operators: {len(operators_data)}")
+        logger.info(f"  Excluded operators: {excluded_count}")
+        logger.info(f"    Special category: {excluded_reasons['Special']}")
+        logger.info(f"    Only COMBO scope: {excluded_reasons['OnlyCOMBO']}")
+        logger.info(f"    Only SELECTION scope: {excluded_reasons['OnlySELECTION']}")
+        logger.info(f"  Final operators: {len(filtered_operators)}")
+        
+        return filtered_operators
+    
     def _load_operators(self, operators_file: str) -> Set[str]:
         """Load operators from operators.txt or operators.json file."""
         operators = set()
@@ -77,16 +135,18 @@ class AlphaExpressionParser:
                     data = json.load(f)
                 
                 if isinstance(data, dict) and 'operators' in data:
-                    # Extract operator names from API response format
-                    operator_list = [op['name'] for op in data['operators']]
+                    # Extract and filter operators from API response format
+                    original_operators = data['operators']
+                    filtered_operators = self._filter_operators(original_operators)
+                    operator_list = [op['name'] for op in filtered_operators]
                 elif isinstance(data, list):
-                    # Direct list of operator names
+                    # Direct list of operator names - assume no filtering needed for simple lists
                     operator_list = data
                 else:
                     raise ValueError(f"Unsupported JSON format in {operators_file}")
                 
                 operators.update(operator_list)
-                logger.info(f"Loaded {len(operators)} operators from JSON cache")
+                logger.info(f"Loaded {len(operators)} operators from JSON cache (after filtering)")
                 
                 # Validate reasonable operator count (should be ~100-300, not thousands)
                 if len(operators) > 1000:

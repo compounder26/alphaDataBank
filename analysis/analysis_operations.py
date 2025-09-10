@@ -381,20 +381,24 @@ class AnalysisOperations:
         datafield_unique_usage = {}
         datafield_nominal_usage = {}
         datafield_categories = {}
-        datafield_region_delay_triplets = set()  # Track unique (datafield, region, delay) triplets
+        datafield_region_pairs = set()  # Track unique (datafield, region) pairs
         
-        # Create mapping of alpha_id to region and delay for quick lookup
+        # Create mapping of alpha_id to region, delay, and universe for quick lookup
         alpha_region_map = {}
         alpha_delay_map = {}
+        alpha_universe_map = {}
         if 'region_name' in included_alphas_df.columns:
             alpha_region_map = dict(zip(included_alphas_df['alpha_id'], included_alphas_df['region_name']))
         if 'delay' in included_alphas_df.columns:
             alpha_delay_map = dict(zip(included_alphas_df['alpha_id'], included_alphas_df['delay']))
+        if 'universe' in included_alphas_df.columns:
+            alpha_universe_map = dict(zip(included_alphas_df['alpha_id'], included_alphas_df['universe']))
         
         for _, row in included_cache.iterrows():
             alpha_id = row['alpha_id']
             alpha_region = alpha_region_map.get(alpha_id, None)
             alpha_delay = alpha_delay_map.get(alpha_id, None)
+            alpha_universe = alpha_universe_map.get(alpha_id, None)
             
             # Parse JSON data - handle both string and list cases
             ops_unique = row['operators_unique'] if isinstance(row['operators_unique'], list) else (json.loads(row['operators_unique']) if row['operators_unique'] else [])
@@ -421,9 +425,9 @@ class AnalysisOperations:
                     datafield_unique_usage[df] = []
                 datafield_unique_usage[df].append(alpha_id)
                 
-                # Track unique (datafield, region, delay) triplets
-                if alpha_region and alpha_delay is not None:
-                    datafield_region_delay_triplets.add((df, alpha_region, alpha_delay))
+                # Track unique (datafield, region) pairs
+                if alpha_region:
+                    datafield_region_pairs.add((df, alpha_region))
                 
                 # Get category
                 if df in self.parser.datafields:
@@ -448,7 +452,7 @@ class AnalysisOperations:
         results['datafields']['unique_usage'] = datafield_unique_usage
         results['datafields']['nominal_usage'] = datafield_nominal_usage
         results['datafields']['by_category'] = datafield_categories
-        results['datafields']['region_specific_count'] = len(datafield_region_delay_triplets)  # Add region-delay-specific count
+        results['datafields']['region_specific_count'] = len(datafield_region_pairs)  # Count unique datafield-region combinations
         results['datafields']['top_datafields'] = sorted(
             [(df, len(alphas)) for df, alphas in datafield_unique_usage.items()],
             key=lambda x: x[1], reverse=True

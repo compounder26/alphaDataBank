@@ -25,6 +25,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from legacy.ace import start_session
 from legacy.helpful_functions import get_datafields
 from database.schema import get_connection
+from config.api_config import (
+    DATAFIELDS_DATA_TYPES, DATAFIELDS_REGIONS, DATAFIELDS_UNIVERSES, DATAFIELDS_DELAYS,
+    DATAFIELDS_MAX_WORKERS, DATAFIELDS_RETRY_WAIT, DATAFIELDS_MAX_BACKOFF_SECONDS
+)
 
 # Thread-safe lock for shared data structures
 data_lock = Lock()
@@ -53,6 +57,144 @@ class PlatformDataFetcher:
         os.makedirs(cache_dir, exist_ok=True)
         
         self.brain_api_url = os.environ.get("BRAIN_API_URL", "https://api.worldquantbrain.com")
+        
+        # Deduplication tracking for datafields (thread-safe)
+        self._seen_datafields = set()  # Track seen (id, region, delay) tuples
+        self._fetch_lock = Lock()  # Thread-safe access to shared deduplication data
+    
+    def _process_datafields_with_deduplication(self, datafields_df: pd.DataFrame, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Process datafields DataFrame and apply deduplication based on (id, region, delay).
+        
+        Args:
+            datafields_df: DataFrame with datafields data
+            params: Parameter dictionary with region, delay, etc.
+            
+        Returns:
+            List of unique datafield dictionaries (deduplicated)
+        """
+        if datafields_df is None or datafields_df.empty:
+            return []
+        
+        results = []
+        combo_name = f"{params['data_type']}/{params['region']}/{params['universe']}/delay_{params['delay']}"
+        
+        with self._fetch_lock:  # Thread-safe access to deduplication data
+            initial_seen_count = len(self._seen_datafields)
+            
+            for _, row in datafields_df.iterrows():
+                try:
+                    datafield_id = row.get('id', '')
+                    if not datafield_id:
+                        logger.debug(f"Skipping row with no ID in {combo_name}")
+                        continue
+                    
+                    # Create unique key based on (id, region, delay)
+                    unique_key = (datafield_id, params['region'], params['delay'])
+                    
+                    if unique_key not in self._seen_datafields:
+                        # New unique datafield - add to seen set and results
+                        self._seen_datafields.add(unique_key)
+                        
+                        # Extract core datafield information
+                        result = {
+                            'id': datafield_id,
+                            'description': row.get('description', '') or row.get('name', '') or row.get('title', ''),
+                            'dataset': row.get('dataset', {}),
+                            'category': row.get('category', {}),
+                            'subcategory': row.get('subcategory', {}),
+                            'region': params['region'],
+                            'delay': params['delay'],
+                            'universe': params['universe'],
+                            'type': row.get('type', ''),
+                            'coverage': row.get('coverage', None),
+                            'userCount': row.get('userCount', None),
+                            'alphaCount': row.get('alphaCount', None),
+                            'pyramidMultiplier': row.get('pyramidMultiplier', None),
+                            'themes': row.get('themes', {}),
+                            'data_type': params['data_type'],  # MATRIX/VECTOR/GROUP
+                            'fetch_region': params['region'],
+                            'fetch_universe': params['universe'],
+                            'fetch_delay': params['delay'],
+                            'fetch_timestamp': datetime.now(),
+                        }
+                        results.append(result)
+                    else:
+                        logger.debug(f"Skipping duplicate datafield {datafield_id} for {params['region']}/delay_{params['delay']} in {combo_name}")
+                        
+                except Exception as e:
+                    logger.warning(f"Error processing row in {combo_name}: {e}")
+                    continue
+            
+            new_unique_count = len(self._seen_datafields) - initial_seen_count
+            
+            if results:
+                logger.debug(f"✅ {combo_name}: {len(results)} unique datafields (filtered {len(datafields_df) - len(results)} duplicates)")
+            else:
+                if len(datafields_df) > 0:
+                    logger.debug(f"✅ {combo_name}: No new unique datafields ({len(datafields_df)} were duplicates)")
+                else:
+                    logger.debug(f"✅ {combo_name}: No datafields in DataFrame")
+        
+        return results
+    
+    def _filter_operators(self, operators_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Filter operators based on scope and category.
+        
+        Exclude operators that:
+        1. Have category == "Special"
+        2. Have scope containing only "COMBO" 
+        3. Have scope containing only "SELECTION"
+        
+        Args:
+            operators_data: List of operator dictionaries with name, scope, category
+            
+        Returns:
+            Filtered list of operator dictionaries
+        """
+        filtered_operators = []
+        excluded_count = 0
+        excluded_reasons = {"Special": 0, "OnlyCOMBO": 0, "OnlySELECTION": 0}
+        
+        for op in operators_data:
+            scope = op.get('scope', [])
+            category = op.get('category', '')
+            name = op.get('name', '')
+            
+            # Exclusion logic
+            should_exclude = False
+            reason = None
+            
+            # Check for Special category
+            if category == "Special":
+                should_exclude = True
+                reason = "Special"
+            # Check for operators with only COMBO scope
+            elif scope == ["COMBO"]:
+                should_exclude = True
+                reason = "OnlyCOMBO"
+            # Check for operators with only SELECTION scope
+            elif scope == ["SELECTION"]:
+                should_exclude = True
+                reason = "OnlySELECTION"
+            
+            if should_exclude:
+                excluded_count += 1
+                excluded_reasons[reason] += 1
+                logger.debug(f"Excluding operator '{name}' - {reason}")
+            else:
+                filtered_operators.append(op)
+        
+        logger.info(f"Operator filtering results:")
+        logger.info(f"  Original operators: {len(operators_data)}")
+        logger.info(f"  Excluded operators: {excluded_count}")
+        logger.info(f"    Special category: {excluded_reasons['Special']}")
+        logger.info(f"    Only COMBO scope: {excluded_reasons['OnlyCOMBO']}")
+        logger.info(f"    Only SELECTION scope: {excluded_reasons['OnlySELECTION']}")
+        logger.info(f"  Final operators: {len(filtered_operators)}")
+        
+        return filtered_operators
     
     def fetch_operators(self, session=None) -> List[Dict[str, Any]]:
         """
@@ -78,7 +220,10 @@ class PlatformDataFetcher:
             operators_data = response.json()
             logger.info(f"Successfully fetched {len(operators_data)} operators")
             
-            return operators_data
+            # Apply filtering to exclude unwanted operators
+            filtered_operators = self._filter_operators(operators_data)
+            
+            return filtered_operators
             
         except Exception as e:
             logger.error(f"Error fetching operators: {e}")
@@ -100,34 +245,31 @@ class PlatformDataFetcher:
             logger.info("Creating new session for comprehensive datafields fetch")
             session = start_session()
         
-        # Configuration for comprehensive fetching
-        DATA_TYPES = ['MATRIX', 'VECTOR', 'GROUP']
-        REGIONS = ['AMR', 'ASI', 'CHN', 'EUR', 'GLB', 'HKG', 'JPN', 'KOR', 'TWN', 'USA']
-        UNIVERSES = [
-            'TOP5', 'TOP10', 'TOP20', 'TOP50', 'TOP100', 'TOP200', 'TOP400', 'TOP500',
-            'TOP600', 'TOP800', 'TOP1000', 'TOP1200', 'TOP1600', 'TOP2000U', 'TOP2500',
-            'TOP3000', 'TOPDIV3000', 'TOPSP500', 'MINVOL1M', 'ILLIQUID_MINVOL1M'
-        ]
-        delays = [0, 1]
+        # Configuration for comprehensive fetching (from config)
+        DATA_TYPES = DATAFIELDS_DATA_TYPES
+        REGIONS = DATAFIELDS_REGIONS
+        UNIVERSES = DATAFIELDS_UNIVERSES
+        delays = DATAFIELDS_DELAYS
         
         try:
             logger.info(f"Starting comprehensive datafields fetch with {max_workers} workers")
-            logger.info("Fetching across all regions/universes/delays")
+            logger.info("Optimized for dataset-based approach - fetching all data types per region/universe/delay")
             
-            # Generate all parameter combinations
+            # Generate parameter combinations WITHOUT iterating data_types
+            # The dataset-based approach in get_datafields() will fetch all data types automatically
             fetch_params = []
-            for data_type in DATA_TYPES:
-                for region in REGIONS:
-                    for universe in UNIVERSES:
-                        for delay in delays:
-                            fetch_params.append({
-                                'data_type': data_type,
-                                'region': region, 
-                                'universe': universe,
-                                'delay': delay
-                            })
+            for region in REGIONS:
+                for universe in UNIVERSES:
+                    for delay in delays:
+                        # Fetch all data types in one call using dataset-based approach
+                        fetch_params.append({
+                            'data_types': DATA_TYPES,  # Pass all data types to be handled by dataset approach
+                            'region': region, 
+                            'universe': universe,
+                            'delay': delay
+                        })
             
-            logger.info(f"📊 Total combinations to process: {len(fetch_params)}")
+            logger.info(f"📊 Total combinations to process: {len(fetch_params)} (optimized from {len(fetch_params) * len(DATA_TYPES)})")
             
             # Shared results list
             all_datafields = []
@@ -213,79 +355,140 @@ class PlatformDataFetcher:
     
     def _fetch_single_datafield_combo(self, session, params: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Fetch datafields for a single parameter combination.
+        Fetch datafields for a single parameter combination with robust error handling.
+        Now optimized to fetch all data types in one call using dataset-based approach.
         
         Args:
             session: Authenticated session
-            params: Dictionary with data_type, region, universe, delay
+            params: Dictionary with data_types (list), region, universe, delay
             
         Returns:
-            List of datafield dictionaries or empty list if failed
+            List of datafield dictionaries or empty list if permanently failed
         """
-        try:
-            # Check and refresh session if needed (like reference script)
+        combo_name = f"ALL_TYPES/{params['region']}/{params['universe']}/delay_{params['delay']}"
+        retry_wait_seconds = DATAFIELDS_RETRY_WAIT
+        max_backoff_seconds = DATAFIELDS_MAX_BACKOFF_SECONDS
+        attempt = 0
+        
+        while True:  # Indefinite retry loop for transient errors
+            attempt += 1
             try:
-                from legacy import ace
-                session_refreshed = ace.check_session_and_relogin(session)
-            except:
-                # If ace module functions not available, use original session
-                session_refreshed = session
+                logger.debug(f"Fetching {combo_name}, attempt {attempt}")
                 
-            # Use existing get_datafields function from helpful_functions.py
-            datafields_df = get_datafields(
-                session_refreshed,
-                instrument_type="EQUITY",  # Always EQUITY
-                region=params['region'],
-                delay=params['delay'],
-                universe=params['universe'],
-                theme="false",
-                dataset_id="",
-                data_type=params['data_type'],  # MATRIX/VECTOR/GROUP goes here
-                search=""
-            )
-            
-            if datafields_df is not None and not datafields_df.empty:
-                # Process the datafields to extract required columns (like reference script)
-                results = []
-                for _, row in datafields_df.iterrows():
+                # Check and refresh session if needed
+                session_to_use = session
+                try:
+                    from legacy import ace
+                    if hasattr(ace, 'check_session_and_relogin'):
+                        session_to_use = ace.check_session_and_relogin(session)
+                except ImportError:
+                    # If ace module not available, use original session
+                    pass
+                except Exception as e:
+                    logger.debug(f"Session refresh failed for {combo_name}: {e}, using original session")
+                
+                # Fetch all data types for this region/universe/delay combination
+                # The dataset-based approach in get_datafields() will handle all datasets automatically
+                all_results = []
+                successful_types = 0
+                failed_types = 0
+                
+                for data_type in params['data_types']:
                     try:
-                        # Extract core datafield information
-                        result = {
-                            'id': row.get('id', ''),
-                            'description': row.get('description', '') or row.get('name', '') or row.get('title', ''),
-                            'dataset': row.get('dataset', {}),
-                            'category': row.get('category', {}),
-                            'subcategory': row.get('subcategory', {}),
+                        logger.debug(f"Fetching {data_type} datafields for {params['region']}/{params['universe']}/delay_{params['delay']}")
+                        
+                        # Use the dataset-based get_datafields function with timeout protection
+                        datafields_df = get_datafields(
+                            session_to_use,
+                            instrument_type="EQUITY",  # Always EQUITY
+                            region=params['region'],
+                            delay=params['delay'],
+                            universe=params['universe'],
+                            theme="false",
+                            dataset_id="",  # Empty = use dataset-based approach
+                            data_type=data_type,  # MATRIX/VECTOR/GROUP
+                            search=""
+                        )
+                        
+                        # Create params for deduplication processing
+                        type_params = {
+                            'data_type': data_type,
                             'region': params['region'],
-                            'delay': params['delay'],
                             'universe': params['universe'],
-                            'type': row.get('type', ''),
-                            'coverage': row.get('coverage', None),
-                            'userCount': row.get('userCount', None),
-                            'alphaCount': row.get('alphaCount', None),
-                            'pyramidMultiplier': row.get('pyramidMultiplier', None),
-                            'themes': row.get('themes', {}),
-                            'data_type': params['data_type'],  # MATRIX/VECTOR/GROUP
-                            'fetch_region': params['region'],
-                            'fetch_universe': params['universe'],
-                            'fetch_delay': params['delay'],
-                            'fetch_timestamp': datetime.now(),
+                            'delay': params['delay']
                         }
-                        results.append(result)
+                        
+                        # Use deduplication helper to process datafields
+                        type_results = self._process_datafields_with_deduplication(datafields_df, type_params)
+                        all_results.extend(type_results)
+                        successful_types += 1
+                        
+                    except KeyboardInterrupt:
+                        logger.info(f"Keyboard interrupt received while fetching {data_type} for {combo_name}. Stopping.")
+                        raise  # Re-raise KeyboardInterrupt immediately
+                        
                     except Exception as e:
-                        logger.warning(f"Error processing row in {params}: {e}")
+                        failed_types += 1
+                        logger.warning(f"Failed to fetch {data_type} for {combo_name}: {e}")
+                        # Continue to next data type, but don't fail entire combination
                         continue
                 
-                if results:
-                    logger.debug(f"✅ {params['data_type']}/{params['region']}/{params['universe']}/delay_{params['delay']}: {len(results)} datafields")
-                return results
-            else:
-                logger.debug(f"No datafields for {params['data_type']}/{params['region']}/{params['universe']}/delay_{params['delay']}")
-                return []
+                logger.debug(f"Completed {combo_name}: {successful_types} successful, {failed_types} failed data types")
                 
-        except Exception as e:
-            logger.warning(f"❌ Error fetching {params['data_type']}/{params['region']}/{params['universe']}/delay_{params['delay']}: {e}")
-            return []
+                # Return results even if some data types failed
+                return all_results
+                    
+            except KeyboardInterrupt:
+                logger.info(f"Keyboard interrupt received for {combo_name}. Stopping.")
+                raise  # Re-raise KeyboardInterrupt
+                
+            except Exception as e:
+                # Categorize errors for better handling
+                error_msg = str(e).lower()
+                
+                # Check for authentication-related errors
+                if any(auth_error in error_msg for auth_error in ['authentication', 'unauthorized', '401', '403']):
+                    logger.error(f"❌ Authentication error for {combo_name}: {e}. Not retrying.")
+                    return []  # Stop retrying on auth errors
+                
+                # Check for rate limiting
+                if '429' in error_msg or 'rate limit' in error_msg:
+                    logger.warning(f"Rate limit hit for {combo_name}: {e}. Waiting 60s before retry...")
+                    time.sleep(60)
+                    continue  # Skip normal backoff for rate limits
+                
+                # Check for persistent connectivity issues vs no data scenarios
+                error_msg_lower = str(e).lower()
+                
+                # If it's clearly a "no data" scenario, don't retry excessively
+                if any(no_data_indicator in error_msg_lower for no_data_indicator in [
+                    'no datasets found', 'empty dataframe', 'no datafields', 'no results'
+                ]):
+                    if attempt >= 2:  # Quick retry for no-data scenarios
+                        logger.info(f"No data available for {combo_name} after {attempt} attempts: {e}")
+                        return []
+                
+                # For connectivity/server errors, use reasonable retry limit
+                if any(connectivity_error in error_msg_lower for connectivity_error in [
+                    'timeout', 'connection', 'network', 'remote end closed', 'connection aborted'
+                ]):
+                    if attempt >= 6:  # More retries for connectivity issues
+                        logger.error(f"❌ Connectivity issues persist for {combo_name} after {attempt} attempts: {e}")
+                        return []
+                
+                # For other errors, use standard retry limit
+                if attempt >= 20:  # Standard retry limit for unknown errors
+                    logger.error(f"❌ Failed after {attempt} attempts for {combo_name}: {e}")
+                    return []
+                
+                wait_duration = min(retry_wait_seconds * min(attempt, 8), max_backoff_seconds)
+                logger.warning(f"❌ Attempt {attempt} failed for {combo_name}: {e}. Retrying in {wait_duration}s...")
+                
+                try:
+                    time.sleep(wait_duration)
+                except KeyboardInterrupt:
+                    logger.info(f"Keyboard interrupt during retry wait for {combo_name}. Stopping.")
+                    raise
     
     def fetch_datafields(self, session=None, region: str = "USA", universe: str = "TOP3000", 
                         delay: int = 1, data_type: str = 'MATRIX') -> pd.DataFrame:

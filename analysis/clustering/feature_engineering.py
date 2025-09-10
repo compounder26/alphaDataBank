@@ -240,96 +240,16 @@ def calculate_multi_scale_features(pnl_data_dict: Dict[str, Dict[str, pd.DataFra
         
         alpha_features = {'alpha_id': alpha_id}
         
-        # Multi-scale volatility estimates
-        for window in windows:
-            if len(returns) >= window:
-                # Exponential decay weights for this window
-                decay_factor = np.log(0.5) / (window // 2)  # Half-life is half the window
-                weights = np.exp(decay_factor * np.arange(window - 1, -1, -1))
-                weights = weights / weights.sum()
-                
-                # Calculate weighted volatility for rolling windows
-                rolling_vols = []
-                for i in range(window, len(returns) + 1):
-                    window_returns = returns.iloc[i-window:i].values
-                    # Filter out any NaN/inf values
-                    clean_returns = window_returns[np.isfinite(window_returns)]
-                    
-                    if len(clean_returns) >= window // 2:  # Need at least half the window
-                        weighted_vol = np.sqrt(np.average(clean_returns**2, weights=weights[:len(clean_returns)]))
-                        if np.isfinite(weighted_vol) and weighted_vol > 0:
-                            rolling_vols.append(weighted_vol)
-                
-                if len(rolling_vols) > 0:
-                    # Filter out any infinite/NaN values
-                    clean_vols = [v for v in rolling_vols if np.isfinite(v) and v > 0]
-                    
-                    if len(clean_vols) > 0:
-                        # Recent volatility (more weight on recent periods)
-                        recent_weights = np.exp(np.linspace(-1, 0, len(clean_vols)))
-                        recent_weights = recent_weights / recent_weights.sum()
-                        weighted_avg_vol = np.average(clean_vols, weights=recent_weights)
-                        
-                        if np.isfinite(weighted_avg_vol) and weighted_avg_vol > 0:
-                            alpha_features[f'vol_{window}d'] = weighted_avg_vol
-                            vol_std = np.std(clean_vols)
-                            alpha_features[f'vol_stability_{window}d'] = 1 / (1 + vol_std) if np.isfinite(vol_std) else 0.5
-                    
-        # Cross-scale relationships with safety checks
-        short_vol_key = f'vol_{windows[0]}d'
-        long_vol_key = f'vol_{windows[-1]}d'
-        
-        if (short_vol_key in alpha_features and long_vol_key in alpha_features and
-            alpha_features[long_vol_key] > 1e-10):  # Avoid division by near-zero
-            ratio = alpha_features[short_vol_key] / alpha_features[long_vol_key]
-            if np.isfinite(ratio):
-                alpha_features['vol_ratio_short_long'] = np.clip(ratio, 0.1, 10.0)  # Cap extreme ratios
-            else:
-                alpha_features['vol_ratio_short_long'] = 1.0  # Neutral ratio
-        else:
-            alpha_features['vol_ratio_short_long'] = 1.0
-        
-        # Turnover stability (consistency of performance patterns)
-        if len(returns) >= 60:
-            # Calculate autocorrelation structure with robust handling
-            ac_1d = returns.autocorr(lag=1) if len(returns) > 1 else 0
-            alpha_features['autocorr_1d'] = ac_1d if pd.notna(ac_1d) and np.isfinite(ac_1d) else 0
-            
-            ac_5d = returns.autocorr(lag=5) if len(returns) > 5 else 0  
-            alpha_features['autocorr_5d'] = ac_5d if pd.notna(ac_5d) and np.isfinite(ac_5d) else 0
-            
-            ac_20d = returns.autocorr(lag=20) if len(returns) > 20 else 0
-            alpha_features['autocorr_20d'] = ac_20d if pd.notna(ac_20d) and np.isfinite(ac_20d) else 0
-            
-            # Mean reversion vs momentum characteristics with robust calculation
-            if len(returns) > 10:
-                autocorrs = []
-                for i in range(1, min(11, len(returns))):
-                    ac = returns.autocorr(lag=i)
-                    if pd.notna(ac) and np.isfinite(ac):
-                        autocorrs.append(ac)
-                
-                if len(autocorrs) > 0:
-                    alpha_features['momentum_strength'] = np.clip(np.mean(autocorrs), -1, 1)
-                else:
-                    alpha_features['momentum_strength'] = 0
-            else:
-                alpha_features['momentum_strength'] = 0
+        # Note: Multi-scale volatility features removed as requested
+        # These features were causing temporal clustering rather than risk-based clustering
+        # Removed features: vol_60d, vol_120d, vol_252d and their stability metrics
+        # Removed features: vol_ratio_short_long, autocorr_1d, autocorr_5d, autocorr_20d, momentum_strength
         
         features.append(alpha_features)
     
-    if not features:
-        logger.warning("No multi-scale features could be calculated")
-        return pd.DataFrame()
-    
-    features_df = pd.DataFrame(features)
-    features_df.set_index('alpha_id', inplace=True)
-    
-    # Fill NaN values with feature medians (more robust than means)
-    features_df = features_df.fillna(features_df.median())
-    
-    logger.info(f"Calculated multi-scale features for {len(features_df)} alphas")
-    return features_df
+    # Return empty DataFrame since multi-scale features have been removed
+    logger.info("Multi-scale features disabled - returning empty DataFrame")
+    return pd.DataFrame()
 
 
 def calculate_advanced_risk_metrics(pnl_data_dict: Dict[str, Dict[str, pd.DataFrame]]) -> pd.DataFrame:
