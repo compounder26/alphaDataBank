@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 # Import advanced clustering methods
 try:
-    from analysis.clustering.advanced_clustering import (
+    from analysis.clustering.clustering_algorithms import (
         calculate_rolling_correlation_matrix,
         hierarchical_risk_parity_clustering,
         calculate_advanced_risk_metrics,

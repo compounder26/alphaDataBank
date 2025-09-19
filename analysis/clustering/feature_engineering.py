@@ -147,7 +147,19 @@ def calculate_spiked_covariance_features(pnl_data_dict: Dict[str, Dict[str, pd.D
     
     # Stage 3: Apply PCA on normalized correlation matrix
     try:
-        correlation_matrix = normalized_returns.corr()
+        # Filter out constant columns before correlation to avoid warnings
+        non_constant_cols = []
+        for col in normalized_returns.columns:
+            if normalized_returns[col].std() > 1e-10:  # Non-constant threshold
+                non_constant_cols.append(col)
+
+        if len(non_constant_cols) < 2:
+            logger.warning("Too few non-constant series for correlation matrix")
+            return pd.DataFrame()
+
+        # Calculate correlation only on non-constant series
+        filtered_returns = normalized_returns[non_constant_cols]
+        correlation_matrix = filtered_returns.corr()
         eigenvals, eigenvecs = np.linalg.eigh(correlation_matrix.fillna(0).values)
         
         # Sort eigenvalues in descending order
@@ -376,8 +388,115 @@ def calculate_advanced_risk_metrics(pnl_data_dict: Dict[str, Dict[str, pd.DataFr
         'monthly_consistency': 0.5
     })
     
+    # Add regime-based features that capture zero-variance behavior
+    regime_features = extract_regime_features(pnl_data_dict, metrics_df.index)
+    if not regime_features.empty:
+        # Combine with risk metrics
+        metrics_df = pd.concat([metrics_df, regime_features], axis=1)
+
     logger.info(f"Calculated advanced risk metrics for {len(metrics_df)} alphas")
     return metrics_df
+
+
+def extract_regime_features(pnl_data_dict: Dict[str, Dict[str, pd.DataFrame]],
+                          alpha_ids: pd.Index) -> pd.DataFrame:
+    """
+    Extract regime-based features that preserve zero-variance information.
+
+    Args:
+        pnl_data_dict: PnL data dictionary
+        alpha_ids: Alpha IDs to process
+
+    Returns:
+        DataFrame with regime features
+    """
+    regime_data = []
+
+    for alpha_id in alpha_ids:
+        if alpha_id not in pnl_data_dict:
+            continue
+
+        data = pnl_data_dict[alpha_id]
+        if data is None or 'df' not in data or data['df'] is None:
+            continue
+
+        df = data['df']
+        if 'pnl' not in df.columns or len(df) < 30:
+            continue
+
+        pnl_series = df['pnl'].fillna(method='ffill').fillna(0)
+        returns = pnl_series.pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+
+        if len(returns) < 20:
+            continue
+
+        regime_metrics = {'alpha_id': alpha_id}
+
+        # Zero-loss regime features
+        positive_periods = returns >= 0
+        regime_metrics['zero_loss_ratio'] = positive_periods.mean()
+        regime_metrics['max_consecutive_gains'] = max_consecutive_sequence(positive_periods)
+
+        # Downside risk regime features
+        negative_periods = returns < 0
+        if negative_periods.any():
+            regime_metrics['has_downside_periods'] = 1
+            regime_metrics['downside_concentration'] = calculate_downside_concentration(returns)
+        else:
+            regime_metrics['has_downside_periods'] = 0
+            regime_metrics['downside_concentration'] = 0
+
+        # Volatility regime features
+        regime_metrics['constant_return_periods'] = (returns == 0).mean()
+        regime_metrics['low_volatility_ratio'] = (abs(returns) < returns.std() * 0.5).mean()
+
+        regime_data.append(regime_metrics)
+
+    if not regime_data:
+        return pd.DataFrame()
+
+    regime_df = pd.DataFrame(regime_data)
+    regime_df.set_index('alpha_id', inplace=True)
+
+    # Add prefix to distinguish from risk metrics
+    regime_df.columns = [f'regime_{col}' for col in regime_df.columns]
+
+    return regime_df
+
+
+def max_consecutive_sequence(boolean_series: pd.Series) -> int:
+    """Calculate maximum consecutive True values in a boolean series."""
+    if boolean_series.empty:
+        return 0
+
+    # Convert to numpy for efficiency
+    values = boolean_series.values
+    max_count = 0
+    current_count = 0
+
+    for val in values:
+        if val:
+            current_count += 1
+            max_count = max(max_count, current_count)
+        else:
+            current_count = 0
+
+    return max_count
+
+
+def calculate_downside_concentration(returns: pd.Series) -> float:
+    """Calculate how concentrated the downside risk is."""
+    negative_returns = returns[returns < 0]
+    if len(negative_returns) == 0:
+        return 0
+
+    # Gini coefficient of negative returns (concentration measure)
+    sorted_losses = np.sort(negative_returns.abs())
+    n = len(sorted_losses)
+    index = np.arange(1, n + 1)
+
+    gini = (2 * np.sum(index * sorted_losses)) / (n * np.sum(sorted_losses)) - (n + 1) / n
+    return gini
 
 
 def calculate_hurst_exponent(returns: np.ndarray, max_lags: int = 50) -> float:

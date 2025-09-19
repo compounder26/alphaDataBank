@@ -31,7 +31,7 @@ def create_advanced_clustering_plot(method, all_region_data, selected_region, di
     
     try:
         # Import clustering analysis functions
-        from analysis.clustering.clustering_analysis import (
+        from analysis.clustering.clustering_algorithms import (
             calculate_correlation_matrix
         )
         from database.operations import (

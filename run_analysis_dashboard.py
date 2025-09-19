@@ -148,7 +148,7 @@ def check_or_generate_clustering_data(region='USA'):
         region = 'USA'
     
     try:
-        from analysis.clustering.clustering_analysis import generate_clustering_data, save_clustering_results
+        from analysis.clustering.clustering_algorithms import generate_clustering_data, save_clustering_results
         
         print(f"This may take a few minutes for region {region}...")
         results = generate_clustering_data(region)
@@ -166,7 +166,7 @@ def check_or_generate_clustering_data(region='USA'):
 
 def generate_all_regions_if_requested(regions_list):
     """Generate clustering data for multiple regions."""
-    from analysis.clustering.clustering_analysis import generate_clustering_data, save_clustering_results
+    from analysis.clustering.clustering_algorithms import generate_clustering_data, save_clustering_results
     
     generated_files = []
     for region in regions_list:
