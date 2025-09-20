@@ -449,7 +449,8 @@ def main():
         if dynamic_operators_file:
             sys.argv.extend(['--operators-file', dynamic_operators_file])
         
-        from analysis.clustering.visualization_server import main as server_main
+        # Use refactored dashboard server
+        from analysis.dashboard.server import main as server_main
         server_main()
         
     except ImportError as e:

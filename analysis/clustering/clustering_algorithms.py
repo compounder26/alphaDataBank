@@ -17,7 +17,7 @@ import numpy as np
 import json
 import logging
 from datetime import datetime
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional, Tuple, Union
 import warnings
 
 # Set up logging
@@ -40,7 +40,7 @@ from database.operations import (
 from config.database_config import REGIONS
 
 # Import correlation engine for correct correlation calculation
-from correlation.correlation_engine import CorrelationEngine
+from analysis.correlation.correlation_engine import CorrelationEngine
 
 # Import scikit-learn components for dimensionality reduction
 from sklearn.manifold import MDS, TSNE
@@ -106,7 +106,7 @@ def apply_correlation_thresholding(correlations: pd.DataFrame, n_samples: int,
 def calculate_correlation_matrix(pnl_data_dict: Dict[str, Dict[str, pd.DataFrame]],
                                 min_common_days: int = 60,
                                 use_cython: bool = True,
-                                apply_thresholding: bool = True) -> pd.DataFrame:
+                                apply_thresholding: bool = False) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
     """
     Calculate pairwise Pearson correlation matrix from daily PnL data with optional thresholding.
     Uses the same correlation calculation method as scripts/calculate_correlations.py
@@ -116,10 +116,11 @@ def calculate_correlation_matrix(pnl_data_dict: Dict[str, Dict[str, pd.DataFrame
                       Format: {alpha_id: {'df': dataframe}}
         min_common_days: Minimum number of common trading days required
         use_cython: Whether to use Cython acceleration (default: True)
-        apply_thresholding: Apply correlation thresholding to remove weak correlations
+        apply_thresholding: Apply correlation thresholding to remove weak correlations (default: False)
 
     Returns:
-        DataFrame containing the correlation matrix (optionally thresholded)
+        If apply_thresholding is False: DataFrame containing the raw correlation matrix
+        If apply_thresholding is True: Dictionary with 'raw' and 'thresholded' correlation matrices
     """
     # Initialize correlation engine with same method as main scripts
     correlation_engine = CorrelationEngine(use_cython=use_cython)
@@ -200,7 +201,16 @@ def calculate_correlation_matrix(pnl_data_dict: Dict[str, Dict[str, pd.DataFrame
         # Estimate average number of samples from PnL data
         avg_samples = np.mean([len(data['df']) for data in pnl_data_dict.values()
                               if data and 'df' in data and data['df'] is not None])
-        corr_matrix = apply_correlation_thresholding(corr_matrix, int(avg_samples))
+        thresholded_matrix = apply_correlation_thresholding(corr_matrix.copy(), int(avg_samples))
+
+        # Log information about thresholding
+        n_zeroed = ((thresholded_matrix == 0) & (corr_matrix != 0)).sum().sum()
+        logger.info(f"Correlation thresholding applied: zeroed {n_zeroed} out of {corr_matrix.size - len(corr_matrix)} correlations")
+
+        return {
+            'raw': corr_matrix,
+            'thresholded': thresholded_matrix
+        }
 
     return corr_matrix
 
@@ -1893,22 +1903,36 @@ def generate_clustering_data(region: str,
         # Enhanced Correlation Analysis
         try:
             print("Calculating enhanced correlation matrix...")
-            corr_matrix = calculate_correlation_matrix(pnl_data, apply_thresholding=True)
+            corr_result = calculate_correlation_matrix(pnl_data, apply_thresholding=True)
 
-            if not corr_matrix.empty and corr_matrix.shape[0] >= 2:
+            # Handle both dictionary and DataFrame returns
+            if isinstance(corr_result, dict):
+                corr_matrix_raw = corr_result['raw']
+                corr_matrix_thresholded = corr_result['thresholded']
+                logger.info("Using dual correlation matrices: raw for visualization/MDS, thresholded for clustering")
+            else:
+                # Backward compatibility: if thresholding wasn't applied, use the same matrix for both
+                corr_matrix_raw = corr_result
+                corr_matrix_thresholded = corr_result
+
+            if not corr_matrix_thresholded.empty and corr_matrix_thresholded.shape[0] >= 2:
                 # Apply correlation regularization for stability
+                # For clustering: use thresholded matrix
+                # For visualization/MDS: use raw matrix
                 if enable_advanced_methods:
                     print("Applying correlation regularization...")
-                    shrunk_corr = apply_correlation_regularization(corr_matrix)
+                    shrunk_corr_thresholded = apply_correlation_regularization(corr_matrix_thresholded)
+                    shrunk_corr_raw = apply_correlation_regularization(corr_matrix_raw)
                     results['shrinkage_applied'] = True
                 else:
-                    shrunk_corr = corr_matrix
+                    shrunk_corr_thresholded = corr_matrix_thresholded
+                    shrunk_corr_raw = corr_matrix_raw
 
-                # Enhanced hierarchical clustering
+                # Enhanced hierarchical clustering (uses thresholded matrix for cleaner clustering)
                 if enable_advanced_methods:
                     print("Performing enhanced hierarchical clustering...")
                     hierarchical_results = enhanced_hierarchical_clustering(
-                        shrunk_corr,
+                        shrunk_corr_thresholded,
                         method='ward',
                         apply_shrinkage=False,  # Already applied
                         find_optimal_k=True
@@ -1916,11 +1940,11 @@ def generate_clustering_data(region: str,
                     results['enhanced_hierarchical'] = hierarchical_results
                     print(f"  Optimal clusters: {hierarchical_results.get('optimal_k', 'unknown')}")
 
-                # Create similarity network
+                # Create similarity network (uses thresholded matrix for clear connections)
                 if enable_advanced_methods:
                     print("Creating alpha similarity network...")
                     network_results = create_alpha_similarity_network(
-                        shrunk_corr, threshold=0.3
+                        shrunk_corr_thresholded, threshold=0.3
                     )
                     if 'error' not in network_results:
                         results['similarity_network'] = {
@@ -1930,10 +1954,10 @@ def generate_clustering_data(region: str,
                         print(f"  Network: {network_results['network_metrics']['n_nodes']} nodes, "
                               f"{network_results['network_metrics']['n_edges']} edges")
 
-                # Standard MDS analysis for all distance metrics
+                # Standard MDS analysis for all distance metrics (uses RAW matrix for full distance information)
                 for distance_metric in ['simple', 'euclidean', 'angular']:
-                    print(f"Calculating MDS with {distance_metric} distance...")
-                    mds_coords = mds_on_correlation_matrix(shrunk_corr, distance_type=distance_metric)
+                    print(f"Calculating MDS with {distance_metric} distance (using raw correlations)...")
+                    mds_coords = mds_on_correlation_matrix(shrunk_corr_raw, distance_type=distance_metric)
 
                     if not mds_coords.empty:
                         # Add cluster information if available
@@ -1945,18 +1969,18 @@ def generate_clustering_data(region: str,
                         results[f'mds_coords_{distance_metric}'] = mds_coords.to_dict(orient='index')
                         print(f"  MDS {distance_metric}: {len(mds_coords)} coordinates")
 
-                # Store heatmap data for visualization
-                print("Storing heatmap data for correlation matrix...")
-                alpha_ids = list(shrunk_corr.index)
+                # Store heatmap data for visualization (uses RAW matrix for accurate visualization)
+                print("Storing heatmap data for correlation matrix (using raw correlations)...")
+                alpha_ids = list(shrunk_corr_raw.index)
 
                 # Store heatmap data (limit to 50 alphas for readability)
                 try:
                     max_alphas = 50
                     if len(alpha_ids) > max_alphas:
-                        heatmap_corr = shrunk_corr.iloc[:max_alphas, :max_alphas]
+                        heatmap_corr = shrunk_corr_raw.iloc[:max_alphas, :max_alphas]
                         heatmap_ids = alpha_ids[:max_alphas]
                     else:
-                        heatmap_corr = shrunk_corr
+                        heatmap_corr = shrunk_corr_raw
                         heatmap_ids = alpha_ids
 
                     heatmap_data = {

@@ -32,7 +32,7 @@ from typing import List, Optional
 # Add parent directory to path to allow imports
 sys.path.append(str(Path(__file__).parent.parent))
 
-from correlation.correlation_engine import CorrelationEngine
+from analysis.correlation.correlation_engine import CorrelationEngine
 from utils.helpers import setup_logging
 from config.database_config import REGIONS
 from api.auth import get_authenticated_session

@@ -65,8 +65,8 @@ def create_advanced_clustering_plot(method, all_region_data, selected_region, di
         
         print(f"Fetched PNL data for {len(pnl_data)} alphas")
         
-        # Calculate correlation matrix
-        corr_matrix = calculate_correlation_matrix(pnl_data)
+        # Calculate correlation matrix (without thresholding for accurate visualization)
+        corr_matrix = calculate_correlation_matrix(pnl_data, apply_thresholding=False)
         
         # Extract alpha_ids from the correlation matrix index
         alpha_ids = list(corr_matrix.index) if not corr_matrix.empty else []

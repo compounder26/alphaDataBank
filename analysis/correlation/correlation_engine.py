@@ -17,7 +17,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 
 # Add project root to path
-sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from utils.helpers import setup_logging
 from database.operations import get_all_alpha_ids_by_region_basic, get_pnl_data_for_alphas
@@ -58,7 +58,7 @@ class CorrelationEngine:
                 # Try to import from the project root directory
                 import sys
                 import os
-                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 if project_root not in sys.path:
                     sys.path.insert(0, project_root)
                 

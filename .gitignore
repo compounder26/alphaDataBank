@@ -34,6 +34,13 @@ build/
 dist/
 *.egg-info/
 
+# Cython build artifacts
+correlation_utils.c
+correlation_utils.cpp
+correlation_utils.html
+*.pyd
+*.so
+
 # IDE and Editor files
 .vscode/
 .idea/

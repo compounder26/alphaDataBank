@@ -13,5 +13,5 @@ extensions = [
 
 setup(
     name="correlation_utils",
-    ext_modules=cythonize(extensions, language_level=3, annotate=True)
+    ext_modules=cythonize(extensions, language_level=3, annotate=False)
 )

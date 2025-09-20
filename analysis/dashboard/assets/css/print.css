@@ -1,0 +1,46 @@
+/* Print Styles for Alpha Dashboard
+ * Optimized for printing dashboard views
+ */
+
+@media print {
+    /* Hide interactive elements */
+    .btn, .dropdown, .modal, .sidebar {
+        display: none !important;
+    }
+
+    /* Optimize chart printing */
+    .chart-container {
+        break-inside: avoid;
+        border: 1px solid #ccc;
+        margin-bottom: 20px;
+    }
+
+    /* Ensure good contrast */
+    body {
+        color: black !important;
+        background: white !important;
+    }
+
+    /* Remove hover effects */
+    *:hover {
+        transform: none !important;
+        box-shadow: none !important;
+    }
+
+    /* Optimize badge display */
+    .badge {
+        border: 1px solid #666;
+        color: black !important;
+        background: white !important;
+    }
+
+    /* Page break control */
+    .no-break {
+        break-inside: avoid;
+    }
+
+    /* Header adjustments */
+    h1, h2, h3, h4, h5, h6 {
+        break-after: avoid;
+    }
+}

@@ -34,7 +34,7 @@ from database.operations import (
 )
 
 # Import unified correlation engine
-from correlation.correlation_engine import CorrelationEngine
+from analysis.correlation.correlation_engine import CorrelationEngine
 from utils.helpers import setup_logging, print_correlation_report
 from config.database_config import REGIONS
 

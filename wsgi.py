@@ -4,10 +4,12 @@ WSGI entry point for production deployment.
 This module provides a production-ready entry point for serving the Alpha DataBank
 dashboard using WSGI servers like Gunicorn or Waitress.
 
+NOW USES THE REFACTORED MODULAR DASHBOARD ARCHITECTURE.
+
 Usage:
     For Unix/Linux/Mac with Gunicorn:
         gunicorn -w 4 -b 127.0.0.1:8050 wsgi:server
-    
+
     For Windows with Waitress:
         waitress-serve --port=8050 wsgi:server
 """
@@ -18,8 +20,8 @@ import os
 # Add project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import the Dash app creation function
-from analysis.clustering.visualization_server import create_app
+# Import the Dash app creation function from refactored dashboard
+from analysis.dashboard.app import create_app
 
 # Create the Dash app
 app = create_app()

@@ -1,0 +1,116 @@
+/* Alpha Dashboard Custom Styles
+ * Extracted from visualization_server.py inline CSS
+ */
+
+/* Custom styles for clickable badges */
+.datafield-clickable-badge:hover {
+    transform: scale(1.1);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    filter: brightness(1.1);
+}
+
+/* Pulsing animation for badges with multiple IDs */
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(13, 110, 253, 0.7); }
+    70% { box-shadow: 0 0 0 10px rgba(13, 110, 253, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(13, 110, 253, 0); }
+}
+
+.badge[title*="available datafields"] {
+    animation: pulse 2s infinite;
+}
+
+/* Improve table readability */
+.table-hover tbody tr:hover {
+    background-color: rgba(0,123,255,0.05);
+}
+
+/* Modal improvements */
+.modal-body .card {
+    border-left: 4px solid #007bff;
+    transition: transform 0.2s;
+}
+
+.modal-body .card:hover {
+    transform: translateX(5px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+/* Loading animations */
+.loading-spinner {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #3498db;
+    border-radius: 50%;
+    animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Chart container styles */
+.chart-container {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 10px;
+    background-color: white;
+    margin-bottom: 15px;
+}
+
+.chart-container h6 {
+    margin-bottom: 10px;
+    color: #333;
+}
+
+/* Scrollable containers */
+.scrollable-content {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    padding: 10px;
+    border-radius: 4px;
+}
+
+/* Badge and button improvements */
+.alpha-badge {
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.alpha-badge:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Grid layout utilities */
+.dashboard-grid {
+    display: grid;
+    gap: 15px;
+    padding: 15px;
+}
+
+.grid-2col {
+    grid-template-columns: 1fr 1fr;
+}
+
+.grid-full {
+    grid-column: 1 / -1;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .dashboard-grid {
+        grid-template-columns: 1fr !important;
+        gap: 10px;
+        padding: 10px;
+    }
+
+    .modal-body .card:hover {
+        transform: none;
+    }
+}
