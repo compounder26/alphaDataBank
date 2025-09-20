@@ -15,14 +15,10 @@ from ..components import (
     create_tab_selector
 )
 
-# Import content creation functions from compatibility bridge
-from ..compatibility_bridge import (
-    create_operators_content,
-    create_datafields_content,
-    create_neutralization_content,
-    create_cross_analysis_content,
-    get_dataset_treemap_sidebar_info
-)
+# Import content creation functions from their actual modules
+from .operators_content import create_operators_content
+from .datafields_content import create_datafields_content, get_dataset_treemap_sidebar_info
+from .analysis_content import create_neutralization_content, create_cross_analysis_content
 
 
 def create_analysis_tab_content() -> dbc.Row:
