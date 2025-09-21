@@ -16,8 +16,10 @@ import concurrent.futures
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 
-# Add project root to path
+# Setup project path
 sys.path.append(str(Path(__file__).parent.parent.parent))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
 from utils.helpers import setup_logging
 from database.operations import get_all_alpha_ids_by_region_basic, get_pnl_data_for_alphas
@@ -54,19 +56,15 @@ class CorrelationEngine:
     def _load_correlation_function(self):
         """Load the correlation calculation function (Cython or Python fallback)."""
         if self.use_cython:
-            try:
-                # Try to import from the project root directory
-                import sys
-                import os
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                if project_root not in sys.path:
-                    sys.path.insert(0, project_root)
-                
-                import correlation_utils
+            # Use cython_helper to automatically compile if needed
+            from utils.cython_helper import get_correlation_utils
+
+            correlation_utils = get_correlation_utils()
+            if correlation_utils is not None:
                 self.calculate_alpha_correlation_fast = correlation_utils.calculate_alpha_correlation_fast
                 logger.info("Using Cython-accelerated correlation calculations")
-            except ImportError:
-                logger.warning("Cython extension 'correlation_utils' not found. Using Python fallback.")
+            else:
+                logger.warning("Could not load Cython extension. Using Python fallback (100x slower).")
                 self.calculate_alpha_correlation_fast = self._python_correlation_fallback
         else:
             self.calculate_alpha_correlation_fast = self._python_correlation_fallback

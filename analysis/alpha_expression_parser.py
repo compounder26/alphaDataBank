@@ -12,8 +12,10 @@ import logging
 import os
 import sys
 
-# Add project root to path for database imports
+# Setup project path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 from database.schema import get_connection
 
 logger = logging.getLogger(__name__)

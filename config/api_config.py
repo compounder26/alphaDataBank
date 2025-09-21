@@ -24,7 +24,7 @@ API_REQUEST_DELAY_SECONDS = 1.0 # General delay between PNL API calls to be poli
 
 # Datafields fetching configuration
 DATAFIELDS_ENDPOINT = f"{BASE_API_URL}/data-fields"
-DATAFIELDS_BATCH_SIZE = 50  # Number of datafields to fetch per API request
+DATAFIELDS_BATCH_SIZE = 50  # Number of datafields to fetch per API request (API max limit)
 DATAFIELDS_MAX_WORKERS = 200  # Maximum threads for parallel fetching in comprehensive mode
 DATAFIELDS_RETRY_WAIT = 15  # Base retry wait time in seconds for failed requests
 DATAFIELDS_REQUEST_TIMEOUT = 20  # HTTP request timeout in seconds

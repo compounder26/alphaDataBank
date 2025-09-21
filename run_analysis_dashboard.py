@@ -41,230 +41,18 @@ Examples:
 import sys
 import os
 import argparse
+import subprocess
 
-# Add project root to path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# Setup project path
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
-def fetch_dynamic_platform_data(force_refresh: bool = False):
-    """
-    Fetch operators and datafields from API if requested.
-    
-    Args:
-        force_refresh: If True, fetch fresh data. If False, use cached data if available.
-        
-    Returns:
-        Tuple of (operators_file_path, datafields_saved_to_db, using_dynamic_data)
-    """
-    try:
-        from api.platform_data_fetcher import PlatformDataFetcher
-        
-        print("🔄 Fetching platform data (operators and datafields)...")
-        fetcher = PlatformDataFetcher()
-        
-        # Fetch and cache data
-        operators_cache, datafields_cache = fetcher.fetch_and_cache_all(force_refresh=force_refresh)
-        
-        if operators_cache and datafields_cache:
-            print("✅ Successfully fetched and cached platform data!")
-            print(f"   Operators cache: {operators_cache}")
-            print(f"   Datafields cache: {datafields_cache}")
-            return operators_cache, datafields_cache, True
-        else:
-            print("⚠️ Failed to fetch platform data, will use static files")
-            return None, None, False
-            
-    except ImportError as e:
-        print(f"⚠️ Could not import platform data fetcher: {e}")
-        print("   Will use static files instead")
-        return None, None, False
-    except Exception as e:
-        print(f"⚠️ Error fetching platform data: {e}")
-        print("   Will use static files instead")
-        return None, None, False
+# Import only clustering utilities (others will be handled by subprocess)
+from utils.clustering_utils import (
+    check_or_generate_clustering_data, auto_generate_missing_regions
+)
 
-def check_and_auto_fetch_platform_data():
-    """
-    Check if operators/datafields cache exist. If not, auto-fetch them.
-    
-    Returns:
-        Tuple of (operators_file_path, datafields_saved_to_db, using_dynamic_data)
-    """
-    try:
-        from api.platform_data_fetcher import PlatformDataFetcher
-        
-        fetcher = PlatformDataFetcher()
-        
-        # Check if operators cache exists (datafields now in database)
-        operators_exist = os.path.exists(fetcher.operators_cache_file)
-        
-        if operators_exist:
-            print("Found existing operators cache")
-            return fetcher.operators_cache_file, True, True
-        
-        # Auto-fetch missing data
-        missing_items = []
-        if not operators_exist:
-            missing_items.append("operators")
-        # Always check/refresh datafields in database
-        missing_items.append("datafields")
-            
-        print(f"Missing cache files: {', '.join(missing_items)}")
-        print("Auto-fetching missing platform data...")
-        
-        return fetch_dynamic_platform_data(force_refresh=False)
-        
-    except ImportError as e:
-        print(f"Warning: Could not import platform data fetcher: {e}")
-        return None, None, False
-    except Exception as e:
-        print(f"Warning: Error checking platform data: {e}")
-        return None, None, False
 
-def check_or_generate_clustering_data(region='USA'):
-    """Check if clustering data exists for any region, generate if not."""
-    from config.database_config import REGIONS
-    
-    # First check if any clustering data exists for the requested region
-    region_files = [
-        f"clustering_results_{region}.json",
-        f"analysis/clustering/alpha_clustering_{region}*.json"
-    ]
-    
-    # Check for existing files
-    import glob
-    for pattern in region_files:
-        files = glob.glob(pattern)
-        if files:
-            latest_file = max(files, key=os.path.getctime)
-            print(f"Using existing clustering data: {latest_file}")
-            return latest_file
-    
-    # No clustering data found, generate for requested region
-    print(f"No clustering data found for {region}. Generating clustering data...")
-    print("Available regions:", ", ".join(REGIONS))
-    
-    if region not in REGIONS:
-        print(f"Warning: {region} not in available regions. Using USA as default.")
-        region = 'USA'
-    
-    try:
-        from analysis.clustering.clustering_algorithms import generate_clustering_data, save_clustering_results
-        
-        print(f"This may take a few minutes for region {region}...")
-        results = generate_clustering_data(region)
-        if results:
-            output_path = save_clustering_results(results)
-            print(f"Generated clustering data: {output_path}")
-            return output_path
-        else:
-            print("Warning: Could not generate clustering data. Dashboard will run without clustering.")
-            return None
-    except Exception as e:
-        print(f"Warning: Error generating clustering data: {e}")
-        print("Dashboard will run without clustering visualization.")
-        return None
-
-def generate_all_regions_if_requested(regions_list):
-    """Generate clustering data for multiple regions."""
-    from analysis.clustering.clustering_algorithms import generate_clustering_data, save_clustering_results
-    
-    generated_files = []
-    for region in regions_list:
-        print(f"\nGenerating clustering data for {region}...")
-        try:
-            results = generate_clustering_data(region)
-            if results:
-                output_path = save_clustering_results(results)
-                generated_files.append(output_path)
-                print(f"Generated: {output_path}")
-            else:
-                print(f"Failed to generate data for {region}")
-        except Exception as e:
-            print(f"Error generating {region}: {e}")
-    
-    return generated_files
-
-def delete_all_clustering_files():
-    """Delete all existing clustering JSON files to force fresh recalculation."""
-    import glob
-    from datetime import datetime
-    
-    print(f"\n🗑️ Cleaning up old clustering files at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    # Patterns for clustering files
-    patterns = [
-        "analysis/clustering/alpha_clustering_*.json",
-        "clustering_results_*.json",
-        "alpha_clustering_*.json"
-    ]
-    
-    deleted_count = 0
-    deleted_files = []
-    for pattern in patterns:
-        files = glob.glob(pattern)
-        for file in files:
-            try:
-                # Get file age before deletion
-                file_age = datetime.now() - datetime.fromtimestamp(os.path.getctime(file))
-                os.remove(file)
-                deleted_files.append((file, file_age))
-                deleted_count += 1
-            except Exception as e:
-                print(f"   ⚠️ Could not delete {file}: {e}")
-    
-    if deleted_count > 0:
-        print(f"✅ Deleted {deleted_count} old clustering files:")
-        for file, age in deleted_files[:5]:  # Show first 5 files
-            age_str = f"{age.days}d {age.seconds//3600}h" if age.days > 0 else f"{age.seconds//3600}h {(age.seconds%3600)//60}m"
-            print(f"   - {os.path.basename(file)} (was {age_str} old)")
-        if deleted_count > 5:
-            print(f"   ... and {deleted_count - 5} more files")
-    else:
-        print("   No clustering files found to delete")
-    
-    return deleted_count
-
-def auto_generate_missing_regions(force_regenerate=True):
-    """Auto-generate clustering data for all regions that don't have existing files."""
-    from config.database_config import REGIONS
-    import glob
-    
-    if force_regenerate:
-        # Delete all existing clustering files first
-        delete_all_clustering_files()
-        print("\n🔄 Force regenerating clustering data for ALL regions...")
-        
-        # Generate for all regions since we deleted everything
-        generated_files = generate_all_regions_if_requested(REGIONS)
-        print(f"\n✅ Generated {len(generated_files)} new clustering files")
-        return [(region, None) for region in REGIONS]
-    
-    print("Checking for existing clustering files across all regions...")
-    
-    missing_regions = []
-    existing_regions = []
-    
-    for region in REGIONS:
-        # Check for existing clustering files for this region
-        pattern = f"analysis/clustering/alpha_clustering_{region}_*.json"
-        files = glob.glob(pattern)
-        
-        if files:
-            latest_file = max(files, key=os.path.getctime)
-            existing_regions.append((region, latest_file))
-            print(f"[OK] {region}: {latest_file}")
-        else:
-            missing_regions.append(region)
-            print(f"[MISSING] {region}: No clustering data found")
-    
-    if missing_regions:
-        print(f"\nGenerating clustering data for {len(missing_regions)} missing regions...")
-        generated_files = generate_all_regions_if_requested(missing_regions)
-        print(f"\nGenerated {len(generated_files)} new clustering files")
-    else:
-        print("\nAll regions have existing clustering data!")
-    
-    return existing_regions + [(region, None) for region in missing_regions]
 
 def main():
     """Run the analysis dashboard with auto-generated clustering data."""
@@ -285,111 +73,104 @@ def main():
     
     args = parser.parse_args()
     
-    # Handle dynamic platform data fetching
+    # Handle dynamic platform data fetching via subprocess
     dynamic_operators_file = None
     using_dynamic_data = False
-    
+
     if args.renew:
-        # Force refresh of operators and datafields
-        dynamic_operators_file, datafields_saved, using_dynamic_data = fetch_dynamic_platform_data(force_refresh=True)
-        
-        # Clear analysis cache when renewing operators/datafields since exclusion logic may change
-        if using_dynamic_data:
-            print("🔄 Clearing analysis cache due to updated operators/datafields...")
-            try:
-                from scripts.clear_analysis_cache import clear_analysis_cache
-                if clear_analysis_cache():
-                    print("✅ Analysis cache cleared - all alphas will be re-analyzed with new operators/datafields")
-                else:
-                    print("⚠️ Failed to clear analysis cache - some exclusions may be outdated")
-            except Exception as e:
-                print(f"⚠️ Could not clear analysis cache: {e}")
-                print("   Some exclusions may be outdated until manual cache clear")
+        # Execute renew_genius.py script
+        print("🔄 Executing renew_genius.py to refresh operators and datafields...")
+        print("=" * 60)
+        result = subprocess.run(
+            [sys.executable, "renew_genius.py"],
+            capture_output=True,
+            text=True
+        )
+
+        # Display output
+        if result.stdout:
+            print(result.stdout)
+        if result.stderr:
+            print(f"Errors: {result.stderr}", file=sys.stderr)
+
+        if result.returncode != 0:
+            print("❌ Failed to refresh operators/datafields")
+            sys.exit(1)
+        else:
+            # Set flag for successful data refresh
+            using_dynamic_data = True
+            # Check if operators file exists for dashboard use
+            operators_file_path = "data/operators_dynamic.json"
+            if os.path.exists(operators_file_path):
+                dynamic_operators_file = operators_file_path
     else:
-        # Auto-fetch operators/datafields if they don't exist (first-time use)
-        dynamic_operators_file, datafields_saved, using_dynamic_data = check_and_auto_fetch_platform_data()
-        
-        # Clear analysis cache if we fetched new data
-        if using_dynamic_data and dynamic_operators_file and datafields_saved:
-            # Check if operators file is newly created (less than 5 minutes old)
-            import os
-            from datetime import datetime, timedelta
-            
-            operators_age = datetime.now() - datetime.fromtimestamp(os.path.getctime(dynamic_operators_file))
-            
-            if operators_age < timedelta(minutes=5):
-                print("🔄 Clearing analysis cache for newly fetched platform data...")
-                try:
-                    from scripts.clear_analysis_cache import clear_analysis_cache
-                    if clear_analysis_cache():
-                        print("✅ Analysis cache cleared - all alphas will be re-analyzed with fresh platform data")
-                    else:
-                        print("⚠️ Failed to clear analysis cache - some exclusions may be outdated")
-                except Exception as e:
-                    print(f"⚠️ Could not clear analysis cache: {e}")
-                    print("   Some exclusions may be outdated until manual cache clear")
-    
-    # Handle explicit cache clearing
+        # Check if operators/datafields exist (for first-time use auto-fetch)
+        operators_file_path = "data/operators_dynamic.json"
+        if os.path.exists(operators_file_path):
+            dynamic_operators_file = operators_file_path
+            using_dynamic_data = True
+        else:
+            print("ℹ️ No operators/datafields found. Run with --renew to fetch them.")
+            print("   Dashboard will continue with limited functionality.")
+
+    # Handle explicit cache clearing via subprocess
     if args.clear_cache:
-        print("🔄 Clearing analysis cache as requested...")
-        try:
-            from scripts.clear_analysis_cache import clear_analysis_cache
-            if clear_analysis_cache():
-                print("✅ Analysis cache cleared - all alphas will be re-analyzed")
-            else:
-                print("⚠️ Failed to clear analysis cache")
-        except Exception as e:
-            print(f"⚠️ Could not clear analysis cache: {e}")
+        print("🔄 Executing clear_cache.py...")
+        print("=" * 60)
+        result = subprocess.run(
+            [sys.executable, "clear_cache.py"],
+            capture_output=True,
+            text=True
+        )
+
+        # Display output
+        if result.stdout:
+            print(result.stdout)
+        if result.stderr:
+            print(f"Errors: {result.stderr}", file=sys.stderr)
+
+        if result.returncode != 0:
+            print("⚠️ Cache clearing had issues")
     
     # Handle explicit CSV import (legacy support)
     if args.import_csv:
         print("⚠️ CSV import is no longer supported - datafields are now stored directly in database")
         print("   Use --renew to fetch fresh datafields data")
     
-    # Handle multi-region generation first
+    # Handle clustering generation
     if args.no_clustering:
         # No clustering mode
         clustering_file = None
         print("📊 Running dashboard without clustering (--no-clustering specified)")
     else:
-        # Determine if we should force regeneration
-        force_regenerate = not args.keep_clustering
-        
-        if force_regenerate:
-            print("\n🔄 FORCE REGENERATING ALL CLUSTERING DATA")
-            print("   (Use --keep-clustering to reuse existing files)")
+        # Use subprocess for clustering regeneration if needed
+        if args.all_regions or args.regions:
+            cmd = [sys.executable, "refresh_clustering.py"]
+            if args.regions:
+                cmd.extend(["--regions"] + args.regions)
+
+            print("🔄 Executing refresh_clustering.py...")
             print("=" * 60)
-        
-        if args.all_regions:
-            from config.database_config import REGIONS
-            if force_regenerate:
-                # Delete all existing files and regenerate everything
-                delete_all_clustering_files()
-                print("Generating fresh clustering data for all regions...")
-                generate_all_regions_if_requested(REGIONS)
-            else:
-                print("Generating clustering data for all regions (keeping existing)...")
-                auto_generate_missing_regions(force_regenerate=False)
-            clustering_file = check_or_generate_clustering_data(args.region)  # Use default region for dashboard
-        elif args.regions:
-            if force_regenerate:
-                # Delete files for specified regions and regenerate
-                import glob
-                for region in args.regions:
-                    pattern = f"analysis/clustering/alpha_clustering_{region}_*.json"
-                    for file in glob.glob(pattern):
-                        try:
-                            os.remove(file)
-                            print(f"Deleted: {file}")
-                        except:
-                            pass
-            print(f"Generating clustering data for specified regions: {args.regions}")
-            generate_all_regions_if_requested(args.regions)
-            clustering_file = check_or_generate_clustering_data(args.regions[0])  # Use first region for dashboard
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            # Display output
+            if result.stdout:
+                print(result.stdout)
+            if result.stderr:
+                print(f"Errors: {result.stderr}", file=sys.stderr)
+
+            if result.returncode != 0:
+                print("⚠️ Clustering generation had issues")
+
+            # Set clustering file for dashboard
+            region_to_use = args.regions[0] if args.regions else args.region
+            clustering_file = check_or_generate_clustering_data(region_to_use)
         else:
-            # Default behavior: regenerate all regions unless --keep-clustering is specified
-            print("Auto-generating clustering data...")
-            auto_generate_missing_regions(force_regenerate=force_regenerate)
+            # Check for existing clustering or generate if missing
+            force_regenerate = not args.keep_clustering
+            if force_regenerate:
+                print("Auto-generating clustering data...")
+                auto_generate_missing_regions(force_regenerate=True)
             clustering_file = args.data_file or check_or_generate_clustering_data(args.region)
     
     # Import here to avoid import errors if dependencies are missing

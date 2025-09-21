@@ -12,8 +12,10 @@ import os
 import sys
 from functools import lru_cache
 
-# Add project root to path
+# Setup project path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
 from database.schema import get_connection, get_region_id, initialize_analysis_database
 from analysis.alpha_expression_parser import AlphaExpressionParser

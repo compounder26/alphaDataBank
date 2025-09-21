@@ -11,7 +11,10 @@ from typing import List
 import logging
 import sys
 import os
+# Setup project path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 from config.database_config import DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME, REGIONS
 
 logger = logging.getLogger(__name__)

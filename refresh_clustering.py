@@ -11,10 +11,11 @@ import sys
 import os
 import argparse
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Setup project path
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
-from run_analysis_dashboard import generate_all_regions_if_requested, delete_all_clustering_files
+from utils.clustering_utils import generate_all_regions_if_requested, delete_all_clustering_files
 from config.database_config import REGIONS
 
 def main():
@@ -71,7 +72,13 @@ def main():
         print("\nReady to start the production server:")
         print("   Windows: waitress-serve --host=127.0.0.1 --port=8050 wsgi:server")
         print("   Linux/Mac: gunicorn -w 4 -b 127.0.0.1:8050 wsgi:server")
-        
+
+        # Return success code based on results
+        if failed_regions:
+            sys.exit(1)  # Some failures
+        else:
+            sys.exit(0)  # All successful
+
     except Exception as e:
         print(f"ERROR: {e}")
         sys.exit(1)

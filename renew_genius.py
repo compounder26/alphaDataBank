@@ -13,8 +13,8 @@ import os
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from run_analysis_dashboard import fetch_dynamic_platform_data
-from scripts.clear_analysis_cache import clear_analysis_cache
+from utils.platform_data_utils import fetch_dynamic_platform_data
+from clear_cache import clear_analysis_cache
 
 def main():
     """Fetch fresh operators/datafields and clear cache."""

@@ -8,6 +8,10 @@ import time
 from typing import Optional, Dict, Any, Tuple, Union
 import sys
 import os
+import getpass
+from pathlib import Path
+from urllib.parse import urljoin
+from requests.adapters import HTTPAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -67,37 +71,14 @@ def get_authenticated_session(session: Optional[requests.Session] = None) -> Opt
     Returns:
         An authenticated requests.Session object or None if authentication fails.
     """
-    # Import ace module from legacy directory
-    try:
-        # First try to import directly (if package is properly installed or in PYTHONPATH)
-        from legacy import ace
-    except ImportError:
-        # If direct import fails, try relative import paths
-        logger.debug(f"Direct import of ace failed, trying alternative paths")
-        current_file_dir = os.path.dirname(os.path.abspath(__file__))  # .../alphaDataBank/api
-        project_root = os.path.abspath(os.path.join(current_file_dir, '..'))  # .../alphaDataBank
-        
-        # Add project root to path only temporarily for this function
-        import importlib.util
-        try:
-            # Try to load the module by file path from legacy directory
-            spec = importlib.util.spec_from_file_location("ace", os.path.join(project_root, "legacy", "ace.py"))
-            if spec and spec.loader:
-                ace = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(ace)
-                logger.debug(f"Successfully loaded ace module from {os.path.join(project_root, 'legacy', 'ace.py')}")
-            else:
-                raise ImportError(f"Could not load ace module from {os.path.join(project_root, 'legacy', 'ace.py')}")
-        except Exception as e:
-            logger.error(f"Failed to import ace module: {e}")
-            raise
+    # Use local authentication functions (moved from legacy)
     
     # Use the provided session if available, otherwise create a new one
     if session is None:
-        session = ace.start_session()
+        session = start_session()
     else:
         # If a session is provided, authenticate it
-        session = ace.authenticate_existing_session(session)
+        session = authenticate_existing_session(session)
     
     # Check with retry logic for 204 responses (single phase)
     if check_session_valid(session, retry_on_204=True):
@@ -123,15 +104,12 @@ def _reauthenticate_session_inplace(session: requests.Session) -> bool:
         True if reauthentication succeeded, False otherwise
     """
     try:
-        # Import ace module to use its authentication logic
-        from legacy import ace
-        
         # Clear the existing authentication and cookies
         session.auth = None
         session.cookies.clear()
-        
-        # Use ace's authenticate_existing_session to update the session in-place
-        authenticated_session = ace.authenticate_existing_session(session)
+
+        # Use local authenticate_existing_session to update the session in-place
+        authenticated_session = authenticate_existing_session(session)
         
         # The session object is the same, but now it should have fresh cookies/auth
         # Verify it worked
@@ -245,3 +223,162 @@ def set_global_session(session: requests.Session) -> None:
 def get_global_session() -> Optional[requests.Session]:
     """Get the current global session."""
     return _current_session
+
+
+# =============================================================================
+# Legacy Authentication Functions (moved from legacy/ace.py)
+# =============================================================================
+
+# Constants for legacy functions
+brain_api_url = os.environ.get("BRAIN_API_URL", "https://api.worldquantbrain.com")
+
+# Define the path to the 'secrets' folder in the project root
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))  # This is api/
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)  # Go up one level to project root
+SECRETS_DIR = os.path.join(PROJECT_ROOT, "secrets")
+COOKIE_FILE_PATH = os.path.join(SECRETS_DIR, "session_cookies.json")
+CREDENTIALS_FILE_PATH = os.path.join(SECRETS_DIR, "platform-brain.json")
+
+
+def save_cookies(session):
+    """Save session cookies to file."""
+    os.makedirs(SECRETS_DIR, exist_ok=True)  # Ensure 'secrets' directory exists
+    with open(COOKIE_FILE_PATH, 'w') as f:
+        json.dump(session.cookies.get_dict(), f)
+    print(f"Cookies saved to {COOKIE_FILE_PATH}")
+
+
+def load_cookies(session):
+    """Load session cookies from file."""
+    if Path(COOKIE_FILE_PATH).exists():
+        with open(COOKIE_FILE_PATH, 'r') as f:
+            cookies = json.load(f)
+            session.cookies.update(cookies)
+        print(f"Cookies loaded from {COOKIE_FILE_PATH}")
+
+
+def get_credentials():
+    """
+    Function to get JSON with platform credentials if they exist, or prompts for new ones.
+    """
+    if Path(CREDENTIALS_FILE_PATH).exists() and os.path.getsize(CREDENTIALS_FILE_PATH) > 2:
+        with open(CREDENTIALS_FILE_PATH) as file:
+            data = json.load(file)
+    else:
+        os.makedirs(SECRETS_DIR, exist_ok=True)  # Ensure 'secrets' directory exists
+        email = input("Email:\n")
+        password = getpass.getpass(prompt="Password:")
+        data = {"email": email, "password": password}
+        with open(CREDENTIALS_FILE_PATH, "w") as file:
+            json.dump(data, file)
+    return data["email"], data["password"]
+
+
+def check_session_timeout(session):
+    """
+    Function checks if the session is still valid.
+    Returns the remaining time before expiration.
+    """
+    try:
+        response = session.get(brain_api_url + "/authentication")
+
+        # Handle different response codes
+        if response.status_code == 200:
+            result = response.json()
+            expiry = result.get("token", {}).get("expiry", 0)
+            print(f"Session timeout check: {expiry} seconds remaining")
+            return expiry
+        elif response.status_code == 204:
+            # 204 No Content - authentication might be pending
+            print("Session check returned 204 (authentication pending)")
+            return 0
+        elif response.status_code == 401:
+            print("Session expired (401 Unauthorized)")
+            return 0
+        else:
+            print(f"Unexpected status code: {response.status_code}")
+            return 0
+    except json.JSONDecodeError:
+        print("Failed to decode JSON response from authentication check")
+        return 0
+    except Exception as e:
+        print(f"Error checking session timeout: {e}")
+        return 0
+
+
+def authenticate_existing_session(s):
+    """
+    Function to authenticate an existing session object.
+    This is useful when you want to use a pre-configured session with custom settings.
+
+    Args:
+        s: An existing requests.Session object with custom configuration
+
+    Returns:
+        The authenticated session object
+    """
+    load_cookies(s)  # Load cookies if available
+
+    # Check if the session cookies are still valid
+    timeout_remaining = check_session_timeout(s)
+    if timeout_remaining > 0:
+        print("Reusing existing session...")
+        return s
+
+    # If the session is not valid, proceed with new authentication
+    s.auth = get_credentials()
+    r = s.post(brain_api_url + "/authentication")
+
+    if r.status_code == requests.status_codes.codes.unauthorized:
+        if r.headers.get("WWW-Authenticate") == "persona":
+            print(
+                "Complete biometrics authentication and press any key to continue: \n"
+                + urljoin(r.url, r.headers["Location"]) + "\n"
+            )
+            input()
+            s.post(urljoin(r.url, r.headers["Location"]))
+
+            while True:
+                if s.post(urljoin(r.url, r.headers["Location"])).status_code != 201:
+                    input("Biometrics authentication is not complete. Please try again and press any key when completed \n")
+                else:
+                    break
+        else:
+            print("\nIncorrect email or password\n")
+            os.remove(CREDENTIALS_FILE_PATH)  # Clear saved credentials
+            # Use recursion to retry authentication with new credentials
+            s.auth = get_credentials()
+            return authenticate_existing_session(s)
+
+    # After authentication, verify the session is actually valid before saving cookies
+    # Wait a bit for authentication to complete
+    time.sleep(2)
+
+    # Verify the session is truly authenticated
+    max_verify_attempts = 3
+    for attempt in range(max_verify_attempts):
+        timeout_check = check_session_timeout(s)
+        if timeout_check > 0:
+            print(f"Authentication successful! Session valid for {timeout_check} seconds")
+            save_cookies(s)
+            return s
+        elif attempt < max_verify_attempts - 1:
+            print(f"Authentication still pending... waiting (attempt {attempt + 1}/{max_verify_attempts})")
+            time.sleep(3)
+
+    print("Warning: Authentication completed but session validation is pending. Cookies saved for retry.")
+    save_cookies(s)  # Save cookies anyway for next attempt
+    return s
+
+
+def start_session():
+    """
+    Function to sign in to the platform and return a session object.
+    Reuses saved cookies if they are valid.
+    """
+    s = requests.Session()
+    # Configure HTTPAdapter for increased connection pool size
+    adapter = HTTPAdapter(pool_connections=250, pool_maxsize=250)
+    s.mount('http://', adapter)
+    s.mount('https://', adapter)
+    return authenticate_existing_session(s)  # Use the common authentication function

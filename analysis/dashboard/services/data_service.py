@@ -13,7 +13,10 @@ from typing import Dict, List, Any, Optional
 from datetime import datetime
 
 # Add the project root to the path for imports (preserve original behavior)
+# Setup project path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
 from analysis.analysis_operations import AnalysisOperations
 from database.schema import get_connection

@@ -29,8 +29,10 @@ import argparse
 from pathlib import Path
 from typing import List, Optional
 
-# Add parent directory to path to allow imports
+# Setup project path
 sys.path.append(str(Path(__file__).parent.parent))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
 from analysis.correlation.correlation_engine import CorrelationEngine
 from utils.helpers import setup_logging

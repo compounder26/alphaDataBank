@@ -11,7 +11,10 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 # Add the project root to the path for imports (preserve original behavior)
+# Setup project path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
 import dash
 import dash_bootstrap_components as dbc

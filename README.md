@@ -32,13 +32,13 @@ Install the required packages:
 pip install -r requirements.txt
 ```
 
-### 2. Compile Cython Module (Optional, for Performance)
+### 2. Cython Module (Automatic Compilation)
 
-This project uses a Cython extension (`correlation_utils.pyx`) to significantly speed up correlation calculations. To get this performance boost, you need to compile it. If you skip this step, the code will automatically use a slower pure Python version.
+This project uses a Cython extension (`correlation_utils.pyx`) to provide **100x speedup** for correlation calculations.
 
-**A. Install a C++ Compiler**
+**Troubleshooting:**
 
-You only need to do this once on your system.
+If auto-compilation fails, you may need to install a C++ compiler:
 
 *   **On Windows:**
     1.  Download the **Visual Studio Build Tools** from the [official Microsoft site](https://visualstudio.microsoft.com/visual-cpp-build-tools/).
@@ -56,12 +56,18 @@ You only need to do this once on your system.
     sudo apt update && sudo apt install build-essential
     ```
 
-**B. Compile the Module**
+**Manual Compilation (if needed):**
 
-Once you have a compiler, run the following command in the project's root directory (with your virtual environment activated):
+If auto-compilation doesn't work, you can manually compile:
 ```bash
+# Check Cython status
+python utils/cython_helper.py
+
+# Manual compile
 python setup.py build_ext --inplace
 ```
+
+**Note:** The compiled files (`.pyd` on Windows, `.so` on Linux/Mac) are platform-specific and not included in the repository.
 
 ### 3. PostgreSQL Setup
 

@@ -28,7 +28,10 @@ warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 # Add the project root to the path for imports
+# Setup project path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
 # Import database functionality
 from database.operations import (
@@ -570,7 +573,7 @@ def apply_dimensionality_reduction(features_df: pd.DataFrame,
         tsne_2d = TSNE(n_components=2,
                        perplexity=perplexity,
                        learning_rate=learning_rate,
-                       n_iter=1000,
+                       max_iter=1000,
                        random_state=random_state,
                        method='barnes_hut')  # Fast approximation
         features_2d = tsne_2d.fit_transform(prep_features)
@@ -583,7 +586,7 @@ def apply_dimensionality_reduction(features_df: pd.DataFrame,
             tsne_clustering = TSNE(n_components=n_components_for_clustering,
                                   perplexity=perplexity,
                                   learning_rate=learning_rate,
-                                  n_iter=1000,
+                                  max_iter=1000,
                                   random_state=random_state,
                                   method='barnes_hut')
             features_clustering = tsne_clustering.fit_transform(prep_features)
@@ -592,7 +595,7 @@ def apply_dimensionality_reduction(features_df: pd.DataFrame,
             tsne_clustering = TSNE(n_components=n_components_for_clustering,
                                   perplexity=perplexity,
                                   learning_rate=learning_rate,
-                                  n_iter=1000,
+                                  max_iter=1000,
                                   random_state=random_state,
                                   method='exact')
             features_clustering = tsne_clustering.fit_transform(prep_features)

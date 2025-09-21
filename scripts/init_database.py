@@ -6,8 +6,10 @@ import os
 import logging
 from pathlib import Path
 
-# Add parent directory to path to allow imports
+# Setup project path
 sys.path.append(str(Path(__file__).parent.parent))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
 from database.schema import initialize_database, initialize_analysis_database, initialize_unsubmitted_database
 from utils.helpers import setup_logging

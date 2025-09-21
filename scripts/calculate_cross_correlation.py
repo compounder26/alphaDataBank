@@ -16,8 +16,10 @@ from itertools import combinations
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Add parent directory to path to allow imports
+# Setup project path
 sys.path.append(str(Path(__file__).parent.parent))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
 from api.auth import get_authenticated_session
 from api.alpha_fetcher import get_robust_session, warm_up_api_connection

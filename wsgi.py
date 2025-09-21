@@ -17,8 +17,9 @@ Usage:
 import sys
 import os
 
-# Add project root to Python path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Setup project path
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
 # Import the Dash app creation function from refactored dashboard
 from analysis.dashboard.app import create_app

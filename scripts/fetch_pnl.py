@@ -8,8 +8,10 @@ import argparse
 import time
 from pathlib import Path
 
-# Add parent directory to path to allow imports
+# Setup project path
 sys.path.append(str(Path(__file__).parent.parent))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
 from api.auth import get_authenticated_session, check_session_valid
 from api.alpha_fetcher import get_alpha_pnl

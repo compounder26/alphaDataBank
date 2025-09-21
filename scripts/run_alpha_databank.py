@@ -14,8 +14,10 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-# Add parent directory to path to allow imports
+# Setup project path
 sys.path.append(str(Path(__file__).parent.parent))
+from utils.bootstrap import setup_project_path
+setup_project_path()
 
 from api.auth import get_authenticated_session, check_session_valid, set_global_session
 from api.alpha_fetcher import scrape_alphas_by_region, get_alpha_pnl_threaded, get_robust_session, warm_up_api_connection
