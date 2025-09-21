@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import List, Optional
 
 # Setup project path
-sys.path.append(str(Path(__file__).parent.parent))
 from utils.bootstrap import setup_project_path
 setup_project_path()
 

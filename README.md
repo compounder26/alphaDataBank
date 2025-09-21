@@ -121,7 +121,7 @@ python scripts/init_database.py
 
 ### 1. Fetch All Submitted Alphas
 ```bash
-python scripts/run_alpha_databank.py --all
+python run_alpha_databank.py --all
 ```
 
 ### 2. Run Analytics Dashboard
@@ -178,5 +178,5 @@ The `--renew` flag:
 
 ### 3. Fetch Unsubmitted Alphas (Optional, link below is an example, use your own links that contain the alphas you want from the brain platform alphas filter page - you can get it by inspecting the network)
 ```bash
-python scripts/run_alpha_databank.py --unsubmitted --url "https://api.worldquantbrain.com/users/self/alphas?limit=50&offset=9800&status=UNSUBMITTED%1FIS_FAIL&order=-dateCreated&hidden=false" --all
+python run_alpha_databank.py --unsubmitted --url "https://api.worldquantbrain.com/users/self/alphas?limit=50&offset=9800&status=UNSUBMITTED%1FIS_FAIL&order=-dateCreated&hidden=false" --all
 ```
