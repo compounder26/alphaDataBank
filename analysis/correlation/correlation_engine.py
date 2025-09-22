@@ -481,10 +481,10 @@ class CorrelationEngine:
 
                         if correlations:
                             correlation_results[alpha_id] = {
-                                'min': min(correlations),
-                                'max': max(correlations),
-                                'avg': np.mean(correlations),
-                                'median': np.median(correlations)
+                                'min': float(min(correlations)),
+                                'max': float(max(correlations)),
+                                'avg': float(np.mean(correlations)),
+                                'median': float(np.median(correlations))
                             }
 
                         completed_count += 1
@@ -536,10 +536,10 @@ class CorrelationEngine:
                     
                     connection.execute(insert_query, {
                         'alpha_id': alpha_id,
-                        'min_corr': stats['min'],
-                        'max_corr': stats['max'],
-                        'avg_corr': stats['avg'],
-                        'median_corr': stats['median']
+                        'min_corr': float(stats['min']) if stats['min'] is not None else None,
+                        'max_corr': float(stats['max']) if stats['max'] is not None else None,
+                        'avg_corr': float(stats['avg']) if stats['avg'] is not None else None,
+                        'median_corr': float(stats['median']) if stats['median'] is not None else None
                     })
                 
                 connection.commit()
