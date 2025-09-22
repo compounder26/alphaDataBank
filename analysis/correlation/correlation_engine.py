@@ -50,6 +50,58 @@ from api.alpha_fetcher import get_robust_session
 logger = logging.getLogger(__name__)
 
 # Module-level functions for ProcessPoolExecutor (must be picklable)
+def calculate_submitted_correlation_worker(args: Tuple) -> Tuple[str, List[float]]:
+    """
+    Module-level worker function for calculating all correlations for one submitted alpha.
+    This function can be pickled and used with ProcessPoolExecutor.
+
+    Args:
+        args: Tuple of (primary_alpha_id, primary_df, other_alpha_data_list)
+              where other_alpha_data_list contains tuples of (alpha_id, alpha_df)
+
+    Returns:
+        Tuple of (primary_alpha_id, list_of_correlations)
+    """
+    primary_alpha_id, primary_df, other_alpha_data_list = args
+    correlations = []
+
+    if primary_df is None or primary_df.empty:
+        return primary_alpha_id, correlations
+
+    for other_alpha_id, other_df in other_alpha_data_list:
+        if other_df is None or other_df.empty:
+            continue
+
+        try:
+            # Find common dates using DataFrame intersection
+            common_dates = primary_df.index.intersection(other_df.index)
+
+            if len(common_dates) < 20:
+                continue
+
+            # Extract PNL values
+            primary_pnl = primary_df.loc[common_dates, 'pnl'].values.astype(np.float64)
+            other_pnl = other_df.loc[common_dates, 'pnl'].values.astype(np.float64)
+
+            # Calculate correlation using optimized method
+            try:
+                from utils.cython_helper import get_correlation_utils
+                correlation_utils = get_correlation_utils()
+                if correlation_utils is not None:
+                    corr = correlation_utils.calculate_alpha_correlation_fast(primary_pnl, other_pnl)
+                else:
+                    corr = _calculate_correlation_numpy(primary_pnl, other_pnl)
+            except:
+                corr = _calculate_correlation_numpy(primary_pnl, other_pnl)
+
+            if corr is not None:
+                correlations.append(corr)
+
+        except Exception as e:
+            continue
+
+    return primary_alpha_id, correlations
+
 def calculate_single_correlation_worker(args: Tuple) -> Tuple[str, str, Optional[float]]:
     """
     Module-level worker function for calculating correlation between two alphas.
@@ -347,60 +399,86 @@ class CorrelationEngine:
     def calculate_batch_submitted(self, region: str, max_workers: Optional[int] = None,
                                 window_days: int = 400) -> None:
         """
-        Calculate correlations for submitted alphas in a region.
-        This replaces the logic from update_correlations_optimized.py
+        Calculate correlations for submitted alphas in a region using ProcessPoolExecutor for true parallelism.
+        Optimized version with bulk loading and better CPU utilization.
         """
         start_time = time.time()
-        logger.info(f"Starting batch correlation calculation for submitted alphas in region {region}")
-        
+        logger.info(f"Starting optimized batch correlation calculation for submitted alphas in region {region}")
+
         try:
             # Get all alpha IDs for the region
             alpha_ids = get_all_alpha_ids_by_region_basic(region)
             if not alpha_ids:
                 logger.warning(f"No alphas found for region {region}")
                 return
-            
+
             logger.info(f"Processing correlations for {len(alpha_ids)} alphas in region {region}")
-            
-            # Get PNL data for all alphas
-            logger.info("Fetching PNL data for all alphas...")
-            alpha_pnl_dict = get_pnl_data_for_alphas(alpha_ids, region)
-            
-            if not alpha_pnl_dict:
+
+            # Use bulk loading for much faster data retrieval
+            logger.info("Using bulk loading for PNL data...")
+            from database.operations import get_pnl_data_bulk
+            pnl_data_dict = get_pnl_data_bulk(alpha_ids, region)
+
+            if not pnl_data_dict:
                 logger.warning("No PNL data found for any alphas")
                 return
-            
-            # Log which alphas were skipped and why
-            skipped_alphas = [alpha_id for alpha_id in alpha_ids if alpha_id not in alpha_pnl_dict]
-            if skipped_alphas:
-                logger.warning(f"Skipped {len(skipped_alphas)} alphas due to missing/insufficient PNL data: {skipped_alphas}")
-            
-            logger.info(f"Successfully loaded PNL data for {len(alpha_pnl_dict)} alphas")
-            
-            # Calculate correlations in parallel
-            correlation_results = {}
-            alphas_with_pnl = [alpha_id for alpha_id in alpha_ids if alpha_id in alpha_pnl_dict]
 
-            logger.info(f"Starting correlation calculation for {len(alphas_with_pnl)} alphas with PNL data")
+            # Log which alphas were skipped
+            skipped_alphas = [alpha_id for alpha_id in alpha_ids if alpha_id not in pnl_data_dict]
+            if skipped_alphas:
+                logger.warning(f"Skipped {len(skipped_alphas)} alphas due to missing PNL data")
+
+            logger.info(f"Successfully loaded PNL data for {len(pnl_data_dict)} alphas using bulk query")
+
+            # Apply windowing to all alphas
+            windowed_data = {}
+            for alpha_id, df in pnl_data_dict.items():
+                if window_days and len(df) > window_days:
+                    windowed_data[alpha_id] = df.iloc[-window_days:]
+                else:
+                    windowed_data[alpha_id] = df
+
+            # Prepare work items for parallel processing
+            work_items = []
+            alphas_with_pnl = list(windowed_data.keys())
+
+            for i, primary_alpha_id in enumerate(alphas_with_pnl):
+                # Create list of other alphas (excluding self)
+                other_alpha_data = [
+                    (other_id, windowed_data[other_id])
+                    for other_id in alphas_with_pnl
+                    if other_id != primary_alpha_id
+                ]
+
+                work_items.append((
+                    primary_alpha_id,
+                    windowed_data[primary_alpha_id],
+                    other_alpha_data
+                ))
+
+            # Calculate correlations in parallel using ProcessPoolExecutor
+            correlation_results = {}
+            completed_count = 0
+            total_alphas = len(work_items)
+
+            logger.info(f"Starting correlation calculation for {total_alphas} alphas with PNL data")
 
             # Use optimal worker count if not specified
             if max_workers is None:
                 max_workers = self.optimal_workers
-                logger.info(f"Using {max_workers} parallel workers for batch correlation")
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_alpha = {
-                    executor.submit(
-                        self._calculate_correlations_for_alpha, 
-                        alpha_id, alpha_pnl_dict, alpha_ids, window_days
-                    ): alpha_id for alpha_id in alphas_with_pnl
-                }
-                
-                completed_count = 0
-                for future in concurrent.futures.as_completed(future_to_alpha):
-                    alpha_id = future_to_alpha[future]
+            # Use ProcessPoolExecutor for true parallelism (same approach as unsubmitted alphas)
+            logger.info(f"Using ProcessPoolExecutor with {max_workers} workers for true parallelism")
+
+            with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all work items
+                futures = [executor.submit(calculate_submitted_correlation_worker, item) for item in work_items]
+
+                # Process results as they complete
+                for future in concurrent.futures.as_completed(futures):
                     try:
-                        correlations = future.result()
+                        alpha_id, correlations = future.result()
+
                         if correlations:
                             correlation_results[alpha_id] = {
                                 'min': min(correlations),
@@ -408,14 +486,14 @@ class CorrelationEngine:
                                 'avg': np.mean(correlations),
                                 'median': np.median(correlations)
                             }
-                        
+
                         completed_count += 1
-                        # More frequent progress updates and clearer messaging
-                        if completed_count % 25 == 0 or completed_count == len(alphas_with_pnl):
-                            logger.info(f"Completed correlations for {completed_count}/{len(alphas_with_pnl)} alphas")
-                            
+                        # Progress updates
+                        if completed_count % 25 == 0 or completed_count == total_alphas:
+                            logger.info(f"Completed correlations for {completed_count}/{total_alphas} alphas")
+
                     except Exception as e:
-                        logger.error(f"Error processing correlations for alpha {alpha_id}: {e}")
+                        logger.error(f"Error processing correlation result: {e}")
             
             # Store results in database
             if correlation_results:
@@ -794,8 +872,8 @@ class CorrelationEngine:
                                 # Track maximum correlation for each unsubmitted alpha
                                 if corr is not None:
                                     abs_corr = abs(corr)
-                                    if unsub_id not in batch_results or abs_corr > batch_results[unsub_id]:
-                                        batch_results[unsub_id] = abs_corr
+                                    if unsub_id not in batch_results or abs_corr > batch_results[unsub_id].get('max_correlation', 0):
+                                        batch_results[unsub_id] = {'max_correlation': abs_corr}
 
                                 completed_in_batch += 1
                                 total_processed += 1
@@ -825,8 +903,8 @@ class CorrelationEngine:
                                 # Track maximum correlation for each unsubmitted alpha
                                 if corr is not None:
                                     abs_corr = abs(corr)
-                                    if unsub_id not in batch_results or abs_corr > batch_results[unsub_id]:
-                                        batch_results[unsub_id] = abs_corr
+                                    if unsub_id not in batch_results or abs_corr > batch_results[unsub_id].get('max_correlation', 0):
+                                        batch_results[unsub_id] = {'max_correlation': abs_corr}
 
                                 completed_in_batch += 1
                                 total_processed += 1
@@ -852,7 +930,7 @@ class CorrelationEngine:
 
             # Store all results
             if all_correlation_results:
-                update_multiple_unsubmitted_alpha_self_correlations(all_correlation_results)
+                update_multiple_unsubmitted_alpha_self_correlations(all_correlation_results, region)
                 logger.info(f"Successfully updated correlations for {len(all_correlation_results)} unsubmitted alphas")
             else:
                 logger.warning("No correlations calculated for unsubmitted alphas")

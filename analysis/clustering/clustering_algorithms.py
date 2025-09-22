@@ -16,6 +16,7 @@ import pandas as pd
 import numpy as np
 import json
 import logging
+import concurrent.futures
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple, Union
 import warnings
@@ -72,6 +73,50 @@ except ImportError:
 # ================================================================================
 # CORRELATION CALCULATION FUNCTIONS
 # ================================================================================
+
+# Module-level worker functions for ProcessPoolExecutor (must be picklable)
+def calculate_clustering_correlation_worker(pair_data: Tuple) -> Tuple[str, str, Optional[float]]:
+    """
+    Module-level worker function for calculating correlation in clustering.
+    This function can be pickled and used with ProcessPoolExecutor.
+
+    Args:
+        pair_data: Tuple of (alpha_id1, alpha_id2, pnl1, pnl2, use_cython)
+
+    Returns:
+        Tuple of (alpha_id1, alpha_id2, correlation)
+    """
+    alpha_id1, alpha_id2, pnl1, pnl2, use_cython = pair_data
+    try:
+        from analysis.correlation.correlation_engine import CorrelationEngine
+        engine = CorrelationEngine(use_cython=use_cython)
+        correlation = engine.calculate_pairwise(pnl1, pnl2)
+        return alpha_id1, alpha_id2, correlation
+    except Exception as e:
+        logger.debug(f"Error in clustering correlation worker for {alpha_id1}/{alpha_id2}: {e}")
+        return alpha_id1, alpha_id2, None
+
+
+def calculate_rolling_correlation_worker(pair_data: Tuple) -> Tuple[str, str, Optional[float]]:
+    """
+    Module-level worker function for calculating rolling correlation.
+    This function can be pickled and used with ProcessPoolExecutor.
+
+    Args:
+        pair_data: Tuple of (alpha_id1, alpha_id2, pnl1, pnl2, use_cython)
+
+    Returns:
+        Tuple of (alpha_id1, alpha_id2, correlation)
+    """
+    alpha_id1, alpha_id2, pnl1, pnl2, use_cython = pair_data
+    try:
+        from analysis.correlation.correlation_engine import CorrelationEngine
+        engine = CorrelationEngine(use_cython=use_cython)
+        corr = engine.calculate_pairwise(pnl1, pnl2)
+        return alpha_id1, alpha_id2, corr
+    except Exception:
+        return alpha_id1, alpha_id2, None
+
 
 def apply_correlation_thresholding(correlations: pd.DataFrame, n_samples: int,
                                   threshold_multiplier: float = 2.5) -> pd.DataFrame:
@@ -157,47 +202,57 @@ def calculate_correlation_matrix(pnl_data_dict: Dict[str, Dict[str, pd.DataFrame
                              index=alpha_ids,
                              columns=alpha_ids)
 
-    # Calculate correlations between all pairs of alphas using the correct method
+    # Calculate correlations using parallel processing for much better performance
+    # Prepare all pairs for parallel processing
+    pairs_to_calculate = []
     for i in range(n_alphas):
         alpha_id1 = alpha_ids[i]
-        pnl1 = pnl_arrays[alpha_id1]
+        df1 = pnl_data_dict[alpha_id1]['df']
 
         for j in range(i+1, n_alphas):
             alpha_id2 = alpha_ids[j]
-            pnl2 = pnl_arrays[alpha_id2]
+            df2 = pnl_data_dict[alpha_id2]['df']
 
+            # Pre-check common dates
+            common_dates = df1.index.intersection(df2.index)
+            if len(common_dates) >= min_common_days:
+                # Add use_cython parameter to the tuple
+                pairs_to_calculate.append((
+                    alpha_id1, alpha_id2,
+                    df1.loc[common_dates, 'pnl'].values,
+                    df2.loc[common_dates, 'pnl'].values,
+                    use_cython
+                ))
+
+    total_pairs = len(pairs_to_calculate)
+    logger.info(f"Calculating {total_pairs} correlation pairs using parallel processing")
+
+    # Use parallel processing with ProcessPoolExecutor for true parallelism
+    max_workers = min(os.cpu_count() or 4, 32)
+
+    # Process correlations in parallel using ProcessPoolExecutor
+    completed = 0
+    logger.info(f"Using ProcessPoolExecutor with {max_workers} workers for true parallelism")
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # Use the module-level worker function
+        futures = [executor.submit(calculate_clustering_correlation_worker, pair) for pair in pairs_to_calculate]
+
+        for future in concurrent.futures.as_completed(futures):
             try:
-                # Find common dates by aligning the PnL series
-                # Get original dataframes to check dates
-                df1 = pnl_data_dict[alpha_id1]['df']
-                df2 = pnl_data_dict[alpha_id2]['df']
+                alpha_id1, alpha_id2, correlation = future.result()
 
-                # Find common dates
-                common_dates = df1.index.intersection(df2.index)
+                if correlation is not None:
+                    # Store in symmetric matrix
+                    corr_matrix.loc[alpha_id1, alpha_id2] = correlation
+                    corr_matrix.loc[alpha_id2, alpha_id1] = correlation
 
-                if len(common_dates) >= min_common_days:
-                    # Get aligned PnL arrays for common dates
-                    aligned_pnl1 = df1.loc[common_dates, 'pnl'].values
-                    aligned_pnl2 = df2.loc[common_dates, 'pnl'].values
-
-                    # Use the correlation engine's method (same as scripts/calculate_correlations.py)
-                    # This correctly calculates percentage returns internally
-                    correlation = correlation_engine.calculate_pairwise(
-                        aligned_pnl1,
-                        aligned_pnl2
-                    )
-
-                    if correlation is not None:
-                        # Store in symmetric matrix
-                        corr_matrix.loc[alpha_id1, alpha_id2] = correlation
-                        corr_matrix.loc[alpha_id2, alpha_id1] = correlation
-                    else:
-                        print(f"Warning: Correlation calculation returned None for {alpha_id1}/{alpha_id2}")
-                else:
-                    print(f"Warning: Not enough common dates ({len(common_dates)}) for {alpha_id1}/{alpha_id2}")
+                completed += 1
+                if completed % 100 == 0 or completed == total_pairs:
+                    logger.info(f"Calculated {completed}/{total_pairs} correlation pairs")
 
             except Exception as e:
-                print(f"Warning: Error calculating correlation for {alpha_id1}/{alpha_id2}: {e}")
+                logger.error(f"Error processing correlation result: {e}")
 
     # Apply correlation thresholding if requested
     if apply_thresholding and not corr_matrix.empty:
@@ -269,7 +324,8 @@ def calculate_rolling_correlation_matrix(
             columns=alpha_ids
         )
 
-        # Calculate pairwise rolling correlations
+        # Prepare all rolling correlation pairs for parallel processing
+        rolling_pairs = []
         for i, alpha_id1 in enumerate(alpha_ids):
             pnl1 = pnl_series[alpha_id1]
 
@@ -285,24 +341,45 @@ def calculate_rolling_correlation_matrix(
                 if len(common_dates) < window:
                     continue
 
-                # Calculate rolling correlations
-                rolling_corrs = []
+                # Prepare all rolling windows for this pair
                 for end_idx in range(window, len(common_dates) + 1):
                     start_idx = end_idx - window
                     window_dates = common_dates[start_idx:end_idx]
 
                     window_pnl1 = pnl1.loc[window_dates].values
                     window_pnl2 = pnl2.loc[window_dates].values
+                    # Add use_cython parameter to the tuple
+                    rolling_pairs.append((alpha_id1, alpha_id2, window_pnl1, window_pnl2, use_cython))
 
-                    corr = correlation_engine.calculate_pairwise(window_pnl1, window_pnl2)
+        # Calculate all rolling correlations in parallel
+        logger.info(f"Calculating {len(rolling_pairs)} rolling correlation windows in parallel")
+        logger.info(f"Using ProcessPoolExecutor with {max_workers} workers for true parallelism")
+
+        # Process in parallel with ProcessPoolExecutor
+        pair_correlations = {}
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Use the module-level worker function
+            futures = [executor.submit(calculate_rolling_correlation_worker, pair) for pair in rolling_pairs]
+
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    alpha_id1, alpha_id2, corr = future.result()
                     if corr is not None:
-                        rolling_corrs.append(corr)
+                        pair_key = (alpha_id1, alpha_id2)
+                        if pair_key not in pair_correlations:
+                            pair_correlations[pair_key] = []
+                        pair_correlations[pair_key].append(corr)
+                except Exception as e:
+                    logger.debug(f"Error processing rolling correlation: {e}")
+                    continue
 
-                if rolling_corrs:
-                    # Use median for robustness against outliers
-                    median_corr = np.median(rolling_corrs)
-                    window_corr_matrix.loc[alpha_id1, alpha_id2] = median_corr
-                    window_corr_matrix.loc[alpha_id2, alpha_id1] = median_corr
+        # Aggregate rolling correlations
+        for (alpha_id1, alpha_id2), corrs in pair_correlations.items():
+            if corrs:
+                # Use median for robustness against outliers
+                median_corr = np.median(corrs)
+                window_corr_matrix.loc[alpha_id1, alpha_id2] = median_corr
+                window_corr_matrix.loc[alpha_id2, alpha_id1] = median_corr
 
         window_correlations[window] = window_corr_matrix
 
