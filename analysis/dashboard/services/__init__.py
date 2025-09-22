@@ -15,9 +15,11 @@ from .data_service import (
     load_all_region_data,
     get_available_regions_from_files,
     load_operators_data,
+    load_tier_specific_datafields,
     validate_clustering_data,
     get_data_file_info,
-    cleanup_cached_data
+    cleanup_cached_data,
+    set_tier_operators_and_datafields
 )
 
 from .analysis_service import (
@@ -53,9 +55,11 @@ __all__ = [
     'load_all_region_data',
     'get_available_regions_from_files',
     'load_operators_data',
+    'load_tier_specific_datafields',
     'validate_clustering_data',
     'get_data_file_info',
     'cleanup_cached_data',
+    'set_tier_operators_and_datafields',
 
     # Service classes and factories
     'AnalysisService',

@@ -21,7 +21,10 @@ setup_project_path()
 from database.schema import initialize_analysis_database
 
 from .app import create_visualization_app, set_operators_file, set_dynamic_operators_list
-from .services import load_clustering_data, load_operators_data
+from .services import (
+    load_clustering_data, load_operators_data, load_tier_specific_datafields,
+    set_tier_operators_and_datafields
+)
 from .config import DASHBOARD_SETTINGS, DEFAULT_OPERATORS_FILE
 
 
@@ -43,11 +46,8 @@ def main():
     Preserves all CLI arguments and startup logic.
     """
     parser = argparse.ArgumentParser(description="Alpha Analysis & Clustering Dashboard")
-    parser.add_argument("--data-file", type=str, help="Path to the clustering data JSON file (optional)")
     parser.add_argument("--port", type=int, default=DASHBOARD_SETTINGS['default_port'], help="Port to run the server on")
     parser.add_argument("--debug", action="store_true", help="Run in debug mode")
-    parser.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
-    parser.add_argument("--init-db", action="store_true", help="Initialize analysis database schema")
     parser.add_argument("--operators-file", type=str, help="Path to custom operators file (JSON or TXT)")
 
     args = parser.parse_args()
@@ -60,55 +60,48 @@ def main():
         set_operators_file(DEFAULT_OPERATORS_FILE)
         print(f"Using default operators file: {DEFAULT_OPERATORS_FILE}")
 
-    # Load dynamic operators list if using JSON file (preserve original logic)
+    # Load dynamic operators and datafields if using JSON file (tier-specific from API)
     operators_file = args.operators_file or DEFAULT_OPERATORS_FILE
     if operators_file.endswith('.json'):
         try:
+            # Load tier-specific operators from JSON
             operators_list = load_operators_data(operators_file)
-            set_dynamic_operators_list(operators_list)
-            print(f"✅ Loaded {len(operators_list)} dynamic operators from JSON file")
-        except Exception as e:
-            print(f"⚠️ Error loading operators from JSON: {e}, falling back to file parsing")
+            print(f"✅ Loaded {len(operators_list)} tier-specific operators from JSON file")
 
-    # Initialize database if requested (preserve original logic)
-    if args.init_db:
-        print("Initializing analysis database schema...")
-        try:
-            initialize_analysis_database()
-            print("Analysis database schema initialized successfully.")
-        except Exception as e:
-            print(f"Error initializing database: {e}")
-            return
+            # Load tier-specific datafields from database (populated by renew_genius.py)
+            datafields_list = load_tier_specific_datafields()
+            print(f"✅ Loaded {len(datafields_list)} tier-specific datafields from database")
 
-    # Load clustering data if provided (preserve original logic)
+            # Set both operators and datafields for tier-based filtering
+            set_tier_operators_and_datafields(operators_list, datafields_list)
+            print("✅ Tier-specific filtering enabled for alpha exclusion")
+
+        except Exception as e:
+            print(f"⚠️ Error loading tier-specific data: {e}")
+            print("⚠️ WARNING: Running without tier filtering - ALL alphas will be shown!")
+    else:
+        print("⚠️ Not using dynamic operators file - tier filtering disabled")
+        print("⚠️ Run with --renew or use renew_genius.py to enable tier-based filtering")
+
+    # Always try to load clustering data automatically
     data = None
-    if args.data_file:
-        if not os.path.isfile(args.data_file):
-            print(f"Warning: Clustering data file not found: {args.data_file}")
-            print("Starting in analysis-only mode...")
-        else:
-            try:
-                data = load_clustering_data(args.data_file)
-                print(f"Loaded clustering data for region: {data.get('region', 'Unknown')}")
-            except Exception as e:
-                print(f"Warning: Could not load clustering data: {e}")
-                print("Starting in analysis-only mode...")
+    # Auto-detect clustering data from standard locations
+    print("Looking for clustering data files...")
+    # The clustering data will be loaded by the dashboard components as needed
 
     # Create app using refactored factory
     print("Initializing dashboard...")
     app = create_visualization_app(data, getattr(sys.modules[__name__], 'DYNAMIC_OPERATORS_LIST', None))
 
-    # Start browser opener thread (preserve original logic)
-    if not args.no_browser:
-        threading.Thread(target=open_browser, args=(args.port, DASHBOARD_SETTINGS['browser_delay_seconds']), daemon=True).start()
+    # Always start browser opener thread
+    threading.Thread(target=open_browser, args=(args.port, DASHBOARD_SETTINGS['browser_delay_seconds']), daemon=True).start()
 
     # Run server (preserve original logic)
     mode = "Analysis & Clustering" if data else "Analysis-only"
     print(f"Starting {mode} dashboard on port {args.port}...")
     print(f"Dashboard URL: http://localhost:{args.port}")
 
-    if not args.no_browser:
-        print(f"Browser will open automatically in {DASHBOARD_SETTINGS['browser_delay_seconds']} seconds...")
+    print(f"Browser will open automatically in {DASHBOARD_SETTINGS['browser_delay_seconds']} seconds...")
 
     try:
         app.run(debug=args.debug, port=args.port, host='127.0.0.1')

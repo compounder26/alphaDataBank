@@ -11,31 +11,19 @@ This script runs the enhanced alpha analysis dashboard that provides:
 
 Usage:
     python run_analysis_dashboard.py [OPTIONS]
-    
+
 Examples:
-    # Run with default settings (analysis-only mode)
+    # Run with default settings
     python run_analysis_dashboard.py
-    
-    # Initialize database schema first
-    python run_analysis_dashboard.py --init-db
-    
+
     # Run on different port
     python run_analysis_dashboard.py --port 8051
-    
-    # Run without opening browser
-    python run_analysis_dashboard.py --no-browser
-    
-    # Include clustering data if available
-    python run_analysis_dashboard.py --data-file clustering_results.json
-    
+
     # Fetch fresh operators/datafields and clear cache for re-analysis
     python run_analysis_dashboard.py --renew
-    
+
     # Clear analysis cache to force re-analysis (without fetching new data)
     python run_analysis_dashboard.py --clear-cache
-    
-    # Import existing CSV datafields to database for better performance
-    python run_analysis_dashboard.py --import-csv
 """
 
 import sys
@@ -47,29 +35,18 @@ import subprocess
 from utils.bootstrap import setup_project_path
 setup_project_path()
 
-# Import only clustering utilities (others will be handled by subprocess)
-from utils.clustering_utils import (
-    check_or_generate_clustering_data, auto_generate_missing_regions
-)
+# Clustering utilities removed - no longer needed
 
 
 
 def main():
-    """Run the analysis dashboard with auto-generated clustering data."""
+    """Run the analysis dashboard."""
     # Parse arguments
-    parser = argparse.ArgumentParser(description="Alpha Analysis & Clustering Dashboard")
-    parser.add_argument("--data-file", type=str, help="Path to clustering data JSON file")
+    parser = argparse.ArgumentParser(description="Alpha Analysis Dashboard")
     parser.add_argument("--port", type=int, default=8050, help="Port to run the server on")
     parser.add_argument("--debug", action="store_true", help="Run in debug mode")
-    parser.add_argument("--no-browser", action="store_true", help="Don't auto-open browser")
-    parser.add_argument("--no-clustering", action="store_true", help="Skip clustering data generation")
-    parser.add_argument("--region", type=str, default='USA', help="Region for clustering analysis")
-    parser.add_argument("--all-regions", action="store_true", help="Generate clustering data for all regions")
-    parser.add_argument("--regions", nargs='*', help="List of specific regions to generate clustering for")
     parser.add_argument("--renew", action="store_true", help="Fetch fresh operators and datafields from API (user-specific)")
     parser.add_argument("--clear-cache", action="store_true", help="Clear analysis cache to force re-analysis of all alphas")
-    parser.add_argument("--keep-clustering", action="store_true", help="Keep existing clustering files instead of regenerating")
-    parser.add_argument("--import-csv", action="store_true", help="Import existing datafields CSV to database for better performance")
     
     args = parser.parse_args()
     
@@ -132,99 +109,19 @@ def main():
         if result.returncode != 0:
             print("⚠️ Cache clearing had issues")
     
-    # Handle explicit CSV import (legacy support)
-    if args.import_csv:
-        print("⚠️ CSV import is no longer supported - datafields are now stored directly in database")
-        print("   Use --renew to fetch fresh datafields data")
-    
-    # Handle clustering generation
-    if args.no_clustering:
-        # No clustering mode
-        clustering_file = None
-        print("📊 Running dashboard without clustering (--no-clustering specified)")
-    else:
-        # Use subprocess for clustering regeneration if needed
-        if args.all_regions or args.regions:
-            cmd = [sys.executable, "refresh_clustering.py"]
-            if args.regions:
-                cmd.extend(["--regions"] + args.regions)
+    # Clustering functionality has been removed
 
-            print("🔄 Executing refresh_clustering.py...")
-            print("=" * 60)
-            result = subprocess.run(cmd, capture_output=True, text=True)
-
-            # Display output
-            if result.stdout:
-                print(result.stdout)
-            if result.stderr:
-                print(f"Errors: {result.stderr}", file=sys.stderr)
-
-            if result.returncode != 0:
-                print("⚠️ Clustering generation had issues")
-
-            # Set clustering file for dashboard
-            region_to_use = args.regions[0] if args.regions else args.region
-            clustering_file = check_or_generate_clustering_data(region_to_use)
-        else:
-            # Check for existing clustering or generate if missing
-            force_regenerate = not args.keep_clustering
-            if force_regenerate:
-                print("Auto-generating clustering data...")
-                auto_generate_missing_regions(force_regenerate=True)
-            clustering_file = args.data_file or check_or_generate_clustering_data(args.region)
-    
     # Import here to avoid import errors if dependencies are missing
     try:
-        # Auto-initialize analysis database schema if needed
-        print("Checking analysis database schema...")
-        from database.schema import get_connection, initialize_analysis_database
-        from sqlalchemy import text
-        import psycopg2.errors
-        
-        try:
-            db_engine = get_connection()
-            with db_engine.connect() as connection:
-                # Test if alpha_analysis_cache table exists
-                result = connection.execute(text("SELECT 1 FROM alpha_analysis_cache LIMIT 1"))
-                print("Analysis database schema is ready.")
-                
-                # Check if datafields table has data
-                datafields_count = connection.execute(text("SELECT COUNT(*) FROM datafields")).scalar()
-                if datafields_count == 0:
-                    print("⚠️ Datafields table is empty. Please run with --renew to populate datafields.")
-                    print("   Dashboard will continue but may have limited datafield analysis functionality.")
-                else:
-                    print(f"Datafields table contains {datafields_count} entries")
-        except psycopg2.errors.UndefinedTable as e:
-            if 'alpha_analysis_cache' in str(e):
-                print("Analysis cache table missing. Initializing analysis database schema...")
-                initialize_analysis_database()
-                print("Analysis database schema initialized successfully.")
-            else:
-                raise
-        except Exception as e:
-            # If it's a different error, still try to initialize in case tables don't exist
-            print(f"Database check failed ({e}). Attempting to initialize analysis schema...")
-            try:
-                initialize_analysis_database()
-                print("Analysis database schema initialized successfully.")
-            except Exception as init_error:
-                print(f"Warning: Failed to initialize analysis schema: {init_error}")
-                print("Dashboard may not work properly without the analysis tables.")
-        
         # Temporarily modify sys.argv to pass arguments to the visualization server
         original_argv = sys.argv.copy()
         sys.argv = ['visualization_server.py']
         
-        if clustering_file:
-            sys.argv.extend(['--data-file', clustering_file])
         
         sys.argv.extend(['--port', str(args.port)])
         
         if args.debug:
             sys.argv.append('--debug')
-        if args.no_browser:
-            sys.argv.append('--no-browser')
         
         # Pass dynamic data files if available (regardless of whether they were just fetched or already existed)
         if dynamic_operators_file:

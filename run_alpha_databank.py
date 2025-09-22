@@ -192,7 +192,9 @@ def process_unsubmitted_alphas(url: str, regions_to_process: List[str], skip_ini
         if not skip_correlation and data_changed:
             logging.info(f"Calculating correlations for unsubmitted alphas in region {region}...")
             try:
-                calculate_unsubmitted_vs_submitted_correlations(region)
+                # Use unified correlation engine
+                correlation_engine = CorrelationEngine()
+                correlation_engine.calculate_unsubmitted_vs_submitted(region)
                 logging.info(f"Successfully calculated correlations for unsubmitted alphas in region {region}")
             except Exception as e:
                 logging.error(f"Error calculating correlations for unsubmitted alphas in region {region}: {e}")

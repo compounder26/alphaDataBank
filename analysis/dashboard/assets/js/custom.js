@@ -23,15 +23,6 @@ window.alphaDashboard = {
                     if (closeBtn) closeBtn.click();
                 });
             }
-
-            // Ctrl+F to focus search
-            if (e.ctrlKey && e.key === 'f') {
-                e.preventDefault();
-                const searchInputs = document.querySelectorAll('input[type="search"], .dash-dropdown input');
-                if (searchInputs.length > 0) {
-                    searchInputs[0].focus();
-                }
-            }
         });
     },
 

@@ -184,7 +184,7 @@ def _process_threshold_streaming(
         from database.operations_unsubmitted import insert_multiple_unsubmitted_alphas, get_unsubmitted_alpha_ids_for_pnl_processing
         from api.alpha_fetcher import get_alpha_pnl_threaded
         from database.operations_unsubmitted import insert_multiple_unsubmitted_pnl_data_optimized
-        from scripts.calculate_unsubmitted_correlations import calculate_unsubmitted_vs_submitted_correlations
+        from analysis.correlation.correlation_engine import CorrelationEngine
     except ImportError as e:
         logger.error(f"Failed to import database operations: {e}")
         logger.error("Falling back to bulk processing mode")
@@ -279,7 +279,8 @@ def _process_threshold_streaming(
                 if not skip_correlation:
                     logger.debug(f"Calculating correlations for {region}...")
                     try:
-                        calculate_unsubmitted_vs_submitted_correlations(region)
+                        correlation_engine = CorrelationEngine()
+                        correlation_engine.calculate_unsubmitted_vs_submitted(region)
                         logger.info(f"✅ Updated correlations for {region}")
                     except Exception as e:
                         logger.warning(f"Correlation calculation failed for {region}: {e}")

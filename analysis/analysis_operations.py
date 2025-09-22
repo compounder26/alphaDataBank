@@ -5,7 +5,7 @@ import json
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from sqlalchemy import text
 import logging
 import os
@@ -25,15 +25,21 @@ logger = logging.getLogger(__name__)
 class AnalysisOperations:
     """Handles database operations for alpha expression analysis."""
     
-    def __init__(self, operators_file: str, operators_list: Optional[List[str]] = None):
+    def __init__(self, operators_file: str, operators_list: Optional[List[str]] = None,
+                 available_datafields_list: Optional[List[str]] = None):
         """
         Initialize with parser.
-        
+
         Args:
             operators_file: Path to operators.txt (or JSON file for dynamic data)
             operators_list: Optional list of operators to use directly (overrides file)
+            available_datafields_list: Optional list of datafields available to user's tier
         """
-        self.parser = AlphaExpressionParser(operators_file, operators_list)
+        # Build region-datafield map if we can
+        region_datafields_map = self._build_region_datafields_map()
+
+        self.parser = AlphaExpressionParser(operators_file, operators_list, available_datafields_list,
+                                           region_datafields_map)
         self._db_engine = None  # Cache database engine
         self._datafield_cache = {}  # Cache datafield availability data
     
@@ -42,6 +48,43 @@ class AnalysisOperations:
         if self._db_engine is None:
             self._db_engine = get_connection()
         return self._db_engine
+
+    def _build_region_datafields_map(self) -> Dict[Tuple[str, str], bool]:
+        """
+        Build a map of (region, datafield_id) -> available from database.
+        This enables region-aware datafield filtering.
+        """
+        region_datafields_map = {}
+        try:
+            db_engine = get_connection()
+            with db_engine.connect() as connection:
+                # Get all available datafields with their regions
+                query = text("""
+                    SELECT DISTINCT datafield_id, region
+                    FROM datafields
+                    WHERE datafield_id IS NOT NULL
+                """)
+                result = connection.execute(query)
+
+                for row in result:
+                    datafield_id = row.datafield_id
+                    region = row.region
+                    if datafield_id and region:
+                        # Mark this (region, datafield) combo as available
+                        region_datafields_map[(region, datafield_id.lower())] = True
+
+                logger.info(f"Built region-datafield map with {len(region_datafields_map)} entries")
+
+                # Log available regions
+                regions = set(region for region, _ in region_datafields_map.keys())
+                logger.info(f"Available regions with datafields: {sorted(regions)}")
+
+        except Exception as e:
+            logger.warning(f"Could not build region-datafield map: {e}")
+            # Return empty map on error
+            return {}
+
+        return region_datafields_map
     
     def _get_cached_datafield_availability(self, selected_data_type: Optional[str] = None):
         """Get cached datafield availability data, with optional type filtering."""
@@ -344,7 +387,14 @@ class AnalysisOperations:
             Analysis results dictionary
         """
         # Filter out excluded alphas from cache
-        included_cache = cache_df[cache_df.get('excluded', False) != True].copy()
+        # Handle the case where 'excluded' column might not exist or contain NaN values
+        if 'excluded' in cache_df.columns:
+            # Convert NaN to False (alphas without exclusion flag are included by default)
+            cache_df['excluded'] = cache_df['excluded'].fillna(False)
+            included_cache = cache_df[cache_df['excluded'] != True].copy()
+        else:
+            # If excluded column doesn't exist, all alphas are included
+            included_cache = cache_df.copy()
         excluded_count = len(cache_df) - len(included_cache)
         
         # Filter corresponding alphas_df to only include non-excluded

@@ -28,18 +28,25 @@ from ..utils import cached
 
 # Global operators list for dynamic operators (preserve original globals)
 DYNAMIC_OPERATORS_LIST = None
+DYNAMIC_DATAFIELDS_LIST = None
 _analysis_ops_instance = None
 
 
 def create_analysis_operations(operators_file: Optional[str] = None,
-                              operators_list: Optional[List[str]] = None) -> AnalysisOperations:
+                              operators_list: Optional[List[str]] = None,
+                              available_datafields_list: Optional[List[str]] = None) -> AnalysisOperations:
     """
     Create or return singleton AnalysisOperations instance with current global settings.
     This prevents creating multiple instances and reduces connection overhead.
 
+    IMPORTANT: When operators_list is provided from operators_dynamic.json, these are
+    TIER-SPECIFIC operators that the user has access to. The API already filters these
+    based on the user's tier.
+
     Args:
         operators_file: Path to operators file (optional)
-        operators_list: List of operators (optional)
+        operators_list: List of operators (optional) - TIER-SPECIFIC from API
+        available_datafields_list: List of available datafields (optional) - TIER-SPECIFIC from API
 
     Returns:
         AnalysisOperations instance
@@ -54,9 +61,38 @@ def create_analysis_operations(operators_file: Optional[str] = None,
         if operators_list is None:
             operators_list = DYNAMIC_OPERATORS_LIST
 
-        _analysis_ops_instance = AnalysisOperations(operators_file, operators_list)
-        print("Created singleton AnalysisOperations instance for better performance")
+        if available_datafields_list is None:
+            available_datafields_list = DYNAMIC_DATAFIELDS_LIST
+
+        # CRITICAL: Pass the tier-specific lists to AnalysisOperations
+        # These lists represent what the user ACTUALLY has access to
+        _analysis_ops_instance = AnalysisOperations(operators_file, operators_list, available_datafields_list)
+
+        if operators_list:
+            print(f"Created AnalysisOperations with {len(operators_list)} tier-specific operators")
+        if available_datafields_list:
+            print(f"Created AnalysisOperations with {len(available_datafields_list)} tier-specific datafields")
+        else:
+            print("WARNING: No tier-specific datafields provided - alphas may not be filtered correctly!")
+
     return _analysis_ops_instance
+
+
+def set_tier_operators_and_datafields(operators_list: List[str], datafields_list: Optional[List[str]] = None):
+    """
+    Set the global tier-specific operators and datafields lists.
+
+    Args:
+        operators_list: List of operators available to the user's tier
+        datafields_list: Optional list of datafields available to the user's tier
+    """
+    global DYNAMIC_OPERATORS_LIST, DYNAMIC_DATAFIELDS_LIST
+    DYNAMIC_OPERATORS_LIST = operators_list
+    DYNAMIC_DATAFIELDS_LIST = datafields_list
+    print(f"Set tier operators: {len(operators_list) if operators_list else 0} operators")
+    print(f"Set tier datafields: {len(datafields_list) if datafields_list else 0} datafields")
+    # Reset singleton to pick up new settings
+    reset_analysis_operations()
 
 
 def reset_analysis_operations():
@@ -188,6 +224,40 @@ def get_available_regions_from_files() -> List[str]:
             available_regions.append(region)
 
     return available_regions
+
+
+def load_tier_specific_datafields() -> List[str]:
+    """
+    Load tier-specific datafields from the database.
+    These are the datafields that were fetched from the API for this user's tier.
+
+    Returns:
+        List of datafield IDs available to the user
+    """
+    try:
+        from database.schema import get_connection
+        from sqlalchemy import text
+
+        db_engine = get_connection()
+        with db_engine.connect() as connection:
+            # Get all unique datafield IDs from the database
+            # These were populated by renew_genius.py and are tier-specific
+            query = text("""
+                SELECT DISTINCT datafield_id
+                FROM datafields
+                WHERE datafield_id IS NOT NULL AND datafield_id != ''
+                ORDER BY datafield_id
+            """)
+
+            result = connection.execute(query)
+            datafield_ids = [row[0] for row in result.fetchall()]
+
+            print(f"Loaded {len(datafield_ids)} tier-specific datafields from database")
+            return datafield_ids
+
+    except Exception as e:
+        print(f"Error loading tier-specific datafields: {e}")
+        return []
 
 
 def load_operators_data(operators_file: str) -> List[str]:

@@ -26,39 +26,75 @@ def check_session_valid(session: requests.Session, retry_on_204: bool = False) -
     Returns:
         bool: True if the session is valid, False otherwise.
     """
-    try:
-        auth_url = "https://api.worldquantbrain.com/authentication"
-        max_retries = 3 if retry_on_204 else 1
-        retry_delay = 2  # seconds
-        
-        for attempt in range(max_retries):
-            # Use raw session.get here to avoid infinite recursion in authenticated_get
-            result = session.get(auth_url)
+    auth_url = "https://api.worldquantbrain.com/authentication"
+    max_retries = 5 if retry_on_204 else 1
+    # Progressive delays for better handling of token propagation
+    retry_delays = [3, 5, 7, 10, 15] if retry_on_204 else [2]
 
-            if result.status_code == 200:
-                try:
-                    expiry = result.json().get("token", {}).get("expiry", 0)
-                    logger.info(f"Session valid - token expires in {expiry} seconds.")
-                    return expiry > 0
-                except json.JSONDecodeError:
-                    logger.error("Failed to decode JSON from authentication response.")
-                    return False
-            elif result.status_code == 204 and retry_on_204 and attempt < max_retries - 1:
-                # 204 No Content might mean authentication is still processing
-                logger.info(f"Authentication pending (204). Retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
-                time.sleep(retry_delay)
-                continue
-            else:
-                if result.status_code == 204:
-                    logger.warning(f"Session check returned 204 (No Content) - authentication may be pending")
+    server_error_retries = 3
+    server_error_base_delay = 2
+
+    for attempt in range(max_retries):
+        # Inner loop for server error retries
+        for server_attempt in range(server_error_retries):
+            try:
+                # Use raw session.get here to avoid infinite recursion in authenticated_get
+                result = session.get(auth_url, timeout=30)
+
+                if result.status_code == 200:
+                    try:
+                        expiry = result.json().get("token", {}).get("expiry", 0)
+                        logger.info(f"Session valid - token expires in {expiry} seconds.")
+                        return expiry > 0
+                    except json.JSONDecodeError:
+                        logger.error("Failed to decode JSON from authentication response.")
+                        return False
+                elif result.status_code == 204 and retry_on_204 and attempt < max_retries - 1:
+                    # 204 No Content might mean authentication is still processing
+                    delay = retry_delays[min(attempt, len(retry_delays) - 1)]
+                    logger.info(f"Authentication pending (204). Token propagation in progress. Retrying in {delay} seconds... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    break  # Break from server error loop, continue with main loop
+                elif result.status_code >= 500:
+                    # Server error - retry with exponential backoff
+                    if server_attempt < server_error_retries - 1:
+                        delay = server_error_base_delay * (2 ** server_attempt)
+                        logger.warning(f"Server error {result.status_code}, retrying in {delay} seconds...")
+                        time.sleep(delay)
+                        continue  # Continue server error retry loop
+                    else:
+                        logger.error(f"Server error {result.status_code} after {server_error_retries} attempts")
+                        return False
                 else:
-                    logger.error(f"Session check failed with status code: {result.status_code}. Response: {result.text[:200]}...")
-                return False
-        
-        return False
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error checking session: {e}")
-        return False
+                    if result.status_code == 204:
+                        logger.warning(f"Session check returned 204 (No Content) - authentication token not yet available after {max_retries} attempts")
+                    else:
+                        logger.error(f"Session check failed with status code: {result.status_code}. Response: {result.text[:200]}...")
+                    return False
+            except requests.exceptions.RequestException as e:
+                if "too many 500 error responses" in str(e) or "too many 504 error responses" in str(e):
+                    # Special handling for too many server errors
+                    if server_attempt < server_error_retries - 1:
+                        delay = server_error_base_delay * (2 ** server_attempt)
+                        logger.warning(f"Too many server errors: {e}, retrying in {delay} seconds...")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        logger.error(f"Too many server errors after {server_error_retries} attempts: {e}")
+                        return False
+                elif server_attempt < server_error_retries - 1:
+                    delay = server_error_base_delay * (2 ** server_attempt)
+                    logger.warning(f"Request error: {e}, retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"Error checking session after {server_error_retries} attempts: {e}")
+                    return False
+
+            # If we get here without breaking, break from server error loop
+            break
+
+    return False
 
 def get_authenticated_session(session: Optional[requests.Session] = None) -> Optional[requests.Session]:
     """
@@ -279,31 +315,56 @@ def check_session_timeout(session):
     Function checks if the session is still valid.
     Returns the remaining time before expiration.
     """
-    try:
-        response = session.get(brain_api_url + "/authentication")
+    max_retries = 3
+    base_delay = 2
 
-        # Handle different response codes
-        if response.status_code == 200:
-            result = response.json()
-            expiry = result.get("token", {}).get("expiry", 0)
-            print(f"Session timeout check: {expiry} seconds remaining")
-            return expiry
-        elif response.status_code == 204:
-            # 204 No Content - authentication might be pending
-            print("Session check returned 204 (authentication pending)")
+    for attempt in range(max_retries):
+        try:
+            response = session.get(brain_api_url + "/authentication", timeout=30)
+
+            # Handle different response codes
+            if response.status_code == 200:
+                result = response.json()
+                expiry = result.get("token", {}).get("expiry", 0)
+                print(f"Session timeout check: {expiry} seconds remaining")
+                return expiry
+            elif response.status_code == 204:
+                # 204 No Content - authentication might be pending
+                print("Session check returned 204 (authentication pending)")
+                return 0
+            elif response.status_code == 401:
+                print("Session expired (401 Unauthorized)")
+                return 0
+            elif response.status_code >= 500:
+                # Server error - retry with exponential backoff
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"Server error {response.status_code}, retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    continue
+                else:
+                    print(f"Server error {response.status_code} after {max_retries} attempts")
+                    return 0
+            else:
+                print(f"Unexpected status code: {response.status_code}")
+                return 0
+        except json.JSONDecodeError:
+            print("Failed to decode JSON response from authentication check")
             return 0
-        elif response.status_code == 401:
-            print("Session expired (401 Unauthorized)")
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)
+                print(f"Request error: {e}, retrying in {delay} seconds...")
+                time.sleep(delay)
+                continue
+            else:
+                print(f"Error checking session timeout after {max_retries} attempts: {e}")
+                return 0
+        except Exception as e:
+            print(f"Unexpected error checking session timeout: {e}")
             return 0
-        else:
-            print(f"Unexpected status code: {response.status_code}")
-            return 0
-    except json.JSONDecodeError:
-        print("Failed to decode JSON response from authentication check")
-        return 0
-    except Exception as e:
-        print(f"Error checking session timeout: {e}")
-        return 0
+
+    return 0
 
 
 def authenticate_existing_session(s):
@@ -351,24 +412,23 @@ def authenticate_existing_session(s):
             return authenticate_existing_session(s)
 
     # After authentication, verify the session is actually valid before saving cookies
-    # Wait a bit for authentication to complete
-    time.sleep(2)
+    # Wait longer initially for token propagation after biometric auth
+    print("Waiting for authentication token to propagate...")
+    time.sleep(5)
 
-    # Verify the session is truly authenticated
-    max_verify_attempts = 3
-    for attempt in range(max_verify_attempts):
-        timeout_check = check_session_timeout(s)
-        if timeout_check > 0:
-            print(f"Authentication successful! Session valid for {timeout_check} seconds")
-            save_cookies(s)
-            return s
-        elif attempt < max_verify_attempts - 1:
-            print(f"Authentication still pending... waiting (attempt {attempt + 1}/{max_verify_attempts})")
-            time.sleep(3)
-
-    print("Warning: Authentication completed but session validation is pending. Cookies saved for retry.")
-    save_cookies(s)  # Save cookies anyway for next attempt
-    return s
+    # Use check_session_valid with retry logic for 204 responses
+    # This will handle the progressive delays automatically
+    if check_session_valid(s, retry_on_204=True):
+        print(f"Authentication successful! Session is now active.")
+        save_cookies(s)
+        return s
+    else:
+        # If check_session_valid fails after all retries, still save cookies
+        # as they may become valid shortly after
+        print("Warning: Authentication completed but token validation is still pending.")
+        print("Cookies saved. The session should work on the next attempt.")
+        save_cookies(s)
+        return s
 
 
 def start_session():

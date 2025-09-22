@@ -2,6 +2,13 @@
 
 A PostgreSQL-based system for tracking and analyzing WorldQuant Brain alpha trading strategies.
 
+## Requirements
+
+- **Python 3.8+** (3.10+ recommended)
+- **PostgreSQL 12+**
+- **C++ Compiler** (for Cython optimization)
+- **8GB+ RAM** (16GB recommended for large datasets)
+
 ## Setup
 
 ### 1. Install Requirements
@@ -34,7 +41,7 @@ pip install -r requirements.txt
 
 ### 2. Cython Module (Automatic Compilation)
 
-This project uses a Cython extension (`correlation_utils.pyx`) to provide **100x speedup** for correlation calculations.
+This project uses a Cython extension (`correlation_utils.pyx`) to provide huge speedup for correlation calculations.
 
 **Troubleshooting:**
 
@@ -106,14 +113,6 @@ python setup.py build_ext --inplace
        "password": "your_brain_password"
    }
    ```
-### 5. Initialize the Database
-
-Once your configuration is set, you need to create the database tables. Run the following script from the project root:
-
-```bash
-python scripts/init_database.py
-```
-
 
 ## Usage
 
@@ -130,8 +129,7 @@ python run_alpha_databank.py --all
 ```bash
 python run_analysis_dashboard.py
 ```
-
-This is the traditional way to run the dashboard. It's simple and works well for personal use, but you'll see a warning about using the development server.
+You'll see a warning about using the development server and it is slower than the production mode.
 
 #### Option 2: Production Mode
 
@@ -180,3 +178,8 @@ The `--renew` flag:
 ```bash
 python run_alpha_databank.py --unsubmitted --url "https://api.worldquantbrain.com/users/self/alphas?limit=50&offset=9800&status=UNSUBMITTED%1FIS_FAIL&order=-dateCreated&hidden=false" --all
 ```
+
+## Documentation
+
+- **[Technical Documentation](TECHNICAL_DOCUMENTATION.md)** - System architecture and design principles
+- **[Scripts & Commands](SCRIPTS_AND_COMMANDS.md)** - Detailed command reference and code examples

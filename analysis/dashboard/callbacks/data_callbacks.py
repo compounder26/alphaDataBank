@@ -141,6 +141,8 @@ def register_data_loading_callbacks(app: dash.Dash):
             # Create summary (EXACT LOGIC from original)
             metadata = results.get('metadata', {})
             total_alphas = metadata.get('total_alphas', 0)
+            excluded_alphas = metadata.get('excluded_alphas', 0)
+            total_processed = metadata.get('total_processed', 0)
 
             # Show filter information in summary if filters are applied
             filter_info = []
@@ -154,11 +156,28 @@ def register_data_loading_callbacks(app: dash.Dash):
                 date_range = f"{date_from or 'start'} to {date_to or 'end'}"
                 filter_info.append(f"Date range: {date_range}")
 
+            # Build summary items starting with total alphas
             summary_items = [
                 dbc.ListGroupItem([
                     html.Strong(f"Total Alphas: {total_alphas}")
                 ])
             ]
+
+            # Add exclusion information if there are excluded alphas
+            if excluded_alphas > 0:
+                exclusion_text = f"Excluded (tier restrictions): {excluded_alphas}"
+                if total_processed > 0:
+                    percentage = (excluded_alphas / total_processed) * 100
+                    exclusion_text += f" ({percentage:.1f}%)"
+
+                summary_items.append(
+                    dbc.ListGroupItem([
+                        html.Strong(exclusion_text),
+                        html.Br(),
+                        html.Small("Alphas excluded due to unavailable operators/datafields for your tier",
+                                  className="text-muted")
+                    ])
+                )
 
             if filter_info:
                 summary_items.append(

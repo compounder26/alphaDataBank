@@ -4,8 +4,6 @@ WSGI entry point for production deployment.
 This module provides a production-ready entry point for serving the Alpha DataBank
 dashboard using WSGI servers like Gunicorn or Waitress.
 
-NOW USES THE REFACTORED MODULAR DASHBOARD ARCHITECTURE.
-
 Usage:
     For Unix/Linux/Mac with Gunicorn:
         gunicorn -w 4 -b 127.0.0.1:8050 wsgi:server

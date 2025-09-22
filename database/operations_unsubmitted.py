@@ -491,3 +491,87 @@ def update_multiple_unsubmitted_alpha_self_correlations(correlation_results: Dic
     except Exception as e:
         logger.error(f"Error updating multiple self_correlations for region {region}: {e}")
         raise
+
+# Optimized bulk loading functions
+def get_unsubmitted_pnl_data_bulk(alpha_ids: List[str], region: str) -> Dict[str, pd.DataFrame]:
+    """
+    Load PNL data for multiple unsubmitted alphas in a single database query.
+    This is significantly faster than loading alphas one by one.
+
+    Args:
+        alpha_ids: List of unsubmitted alpha IDs to load
+        region: Region identifier
+
+    Returns:
+        Dictionary of alpha_id -> DataFrame with PNL data
+    """
+    if not alpha_ids:
+        return {}
+
+    table_name = f'pnl_unsubmitted_{region.lower()}'
+
+    try:
+        db_engine = get_connection()
+
+        # Use ANY() for efficient bulk loading
+        query = text(f"""
+            SELECT alpha_id, date, pnl
+            FROM {table_name}
+            WHERE alpha_id = ANY(:alpha_ids)
+            ORDER BY alpha_id, date
+        """)
+
+        with db_engine.connect() as connection:
+            # Execute single query for all alphas
+            logger.info(f"Executing bulk unsubmitted PNL query for {len(alpha_ids)} alphas in region {region}")
+            df = pd.read_sql(
+                query,
+                connection,
+                params={'alpha_ids': alpha_ids}
+            )
+
+        if df.empty:
+            logger.warning(f"No unsubmitted PNL data found for any of the {len(alpha_ids)} alphas")
+            return {}
+
+        # Convert date column to datetime
+        df['date'] = pd.to_datetime(df['date'])
+
+        # Group by alpha_id and create dictionary
+        result = {}
+        for alpha_id, group_df in df.groupby('alpha_id'):
+            pnl_df = group_df[['date', 'pnl']].set_index('date').sort_index()
+            result[str(alpha_id)] = pnl_df
+
+        logger.info(f"Successfully loaded unsubmitted PNL data for {len(result)} alphas in a single query")
+        return result
+
+    except Exception as e:
+        # Check if it's a table not found error
+        error_msg = str(e)
+        if "does not exist" in error_msg or "UndefinedTable" in error_msg:
+            logger.warning(f"Table {table_name} does not exist for region {region}. This region may not support unsubmitted alphas.")
+        else:
+            logger.error(f"Error in bulk unsubmitted PNL loading: {e}")
+        return {}
+
+def get_unsubmitted_pnl_data_optimized(alpha_ids: List[str], region: str) -> Dict[str, Dict]:
+    """
+    Load unsubmitted PNL data optimized for correlation calculation.
+    Returns the same format as get_unsubmitted_pnl_data_for_alphas but much faster.
+
+    Args:
+        alpha_ids: List of unsubmitted alpha IDs
+        region: Region identifier
+
+    Returns:
+        Dictionary compatible with existing correlation code
+    """
+    pnl_data = get_unsubmitted_pnl_data_bulk(alpha_ids, region)
+
+    # Convert to expected format
+    result = {}
+    for alpha_id, df in pnl_data.items():
+        result[alpha_id] = {'df': df}
+
+    return result

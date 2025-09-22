@@ -22,3 +22,6 @@ networkx
 # Production server dependencies (optional - for better performance)
 gunicorn  # Unix/Linux/Mac production server
 waitress  # Windows-compatible production server
+
+# System monitoring and optimization
+psutil  # For CPU and memory monitoring in correlation optimization

@@ -6,7 +6,7 @@ supporting both unique and nominal counting for analysis purposes.
 """
 import re
 import pandas as pd
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Dict, List, Set, Tuple, Optional, Any
 from collections import defaultdict, Counter
 import logging
 import os
@@ -40,29 +40,51 @@ class AlphaExpressionParser:
         '||': 'or'
     }
     
-    def __init__(self, operators_file: str, operators_list: Optional[List[str]] = None):
+    def __init__(self, operators_file: str, operators_list: Optional[List[str]] = None,
+                 available_datafields_list: Optional[List[str]] = None,
+                 region_datafields_map: Optional[Dict[Tuple[str, str], bool]] = None):
         """
         Initialize parser with operators and datafields.
-        
+
         Args:
             operators_file: Path to operators file (.txt or .json for dynamic data)
-            operators_list: Optional list of operators to use directly (overrides file)
+            operators_list: Optional list of operators available to user's tier
+            available_datafields_list: Optional list of datafields available to user's tier
+            region_datafields_map: Optional map of (region, datafield_id) -> available
         """
         if operators_list:
             self.available_operators = set(operators_list)
             logger.info(f"Using provided operators list: {len(self.available_operators)} operators")
         else:
             self.available_operators = self._load_operators(operators_file)
-        
-        # Use ONLY the available operators for pattern matching
-        # No fallback to static files - only match operators accessible to user's tier
-        self.all_operators = self.available_operators.copy()
-        logger.info(f"Using {len(self.all_operators)} user-accessible operators for pattern matching")
-        
+
+        # Load ALL operators for pattern matching to detect unavailable ones
+        self.all_operators = self._load_all_operators(operators_file)
+        logger.info(f"Loaded {len(self.all_operators)} total operators for pattern matching")
+        logger.info(f"User has access to {len(self.available_operators)} operators")
+
         self.datafields = self._load_datafields_from_database()
+
+        # Set available datafields for tier-based filtering
+        if available_datafields_list:
+            self.available_datafields = set(available_datafields_list)
+            logger.info(f"Using provided datafields list: {len(self.available_datafields)} datafields")
+        else:
+            # If no explicit list provided, assume all loaded datafields are available
+            self.available_datafields = set(self.datafields.keys())
+            logger.info(f"No datafields filter provided - using all {len(self.available_datafields)} datafields")
+
+        # Store region-datafield mapping for region-aware filtering
+        self.region_datafields_map = region_datafields_map or {}
+        if self.region_datafields_map:
+            logger.info(f"Using region-datafield mapping with {len(self.region_datafields_map)} entries")
+            # Get unique regions from the map
+            regions = set(region for region, _ in self.region_datafields_map.keys())
+            logger.info(f"Available regions: {sorted(regions)}")
+
         self.operator_pattern = self._create_operator_pattern()
         self.datafield_pattern = self._create_datafield_pattern()
-        
+
         # Create symbol patterns
         self.symbol_patterns = self._create_symbol_patterns()
     
@@ -123,7 +145,48 @@ class AlphaExpressionParser:
         logger.info(f"  Final operators: {len(filtered_operators)}")
         
         return filtered_operators
-    
+
+    def _load_all_operators(self, operators_file: str) -> Set[str]:
+        """Load ALL operators from file without filtering (needed for exclusion detection)."""
+        operators = set()
+        try:
+            # Make JSON detection more robust (case-insensitive, strip whitespace)
+            operators_file_clean = operators_file.strip().lower()
+            if operators_file_clean.endswith('.json'):
+                # Handle dynamic JSON format
+                import json
+                with open(operators_file, 'r') as f:
+                    data = json.load(f)
+
+                if isinstance(data, dict) and 'operators' in data:
+                    # Extract ALL operators from API response format WITHOUT filtering
+                    original_operators = data['operators']
+                    operator_list = [op['name'] for op in original_operators]
+                elif isinstance(data, list):
+                    # Direct list of operator names
+                    operator_list = data
+                else:
+                    raise ValueError(f"Unsupported JSON format in {operators_file}")
+
+                operators.update(operator_list)
+                logger.info(f"Loaded {len(operators)} total operators from JSON cache (NO filtering)")
+
+            else:
+                # Handle traditional txt format
+                with open(operators_file, 'r') as f:
+                    content = f.read().strip()
+                    # Split by comma and clean up whitespace
+                    operator_list = [op.strip() for op in content.split(',')]
+                    operators.update(operator_list)
+                logger.info(f"Loaded {len(operators)} total operators from TXT file")
+
+        except FileNotFoundError:
+            logger.warning(f"Operators file not found: {operators_file}")
+        except Exception as e:
+            logger.error(f"Error loading all operators from {operators_file}: {e}")
+
+        return operators
+
     def _load_operators(self, operators_file: str) -> Set[str]:
         """Load operators from operators.txt or operators.json file."""
         operators = set()
@@ -342,25 +405,244 @@ class AlphaExpressionParser:
     def _filter_operators_by_availability(self, operators: Set[str]) -> Set[str]:
         """
         Filter operators to only include those available to the user's tier.
-        
+
         Args:
             operators: Set of operator names found in expression
-            
+
         Returns:
             Set of operators that are actually available to the user
         """
         return operators & self.available_operators
-    
-    def parse_expression(self, expression: str) -> Dict[str, Dict]:
+
+    def _extract_variables(self, expression: str) -> Set[str]:
         """
-        Parse alpha expression to extract operators and datafields.
-        
+        Extract all variable names defined in the expression.
+        Variables are identified by the pattern: variable_name = expression
+        Excludes named parameters inside function calls (k=1, ignore="NAN")
+        """
+        variables = set()
+        # Pattern: variable_name = expression at statement level (not inside parentheses)
+        # Split by semicolon to get individual statements
+        statements = expression.split(';')
+        for statement in statements:
+            # Look for assignments at the statement level (not inside function calls)
+            # Pattern: start of line/statement, variable name, =, but not ==
+            var_pattern = r'^\s*([a-zA-Z_]\w*)\s*=(?!=)'
+            match = re.match(var_pattern, statement.strip())
+            if match:
+                variables.add(match.group(1).lower())
+        return variables
+
+    def _extract_operators_strict(self, expression: str) -> Tuple[Set[str], List[str]]:
+        """
+        Extract all operators (functions with parentheses).
+        Returns both recognized and unrecognized operators.
+        """
+        found_operators = set()
+        unrecognized = []
+        # Pattern: word followed by opening parenthesis
+        op_pattern = r'\b([a-zA-Z_]\w*)\s*\('
+        for match in re.finditer(op_pattern, expression.lower()):
+            op_name = match.group(1)
+            if op_name in self.available_operators:
+                found_operators.add(op_name)
+            else:
+                # It looks like an operator but not in our available list
+                unrecognized.append(op_name)
+        return found_operators, unrecognized
+
+    def _extract_datafields_strict(self, expression: str, variables: Set[str], region: Optional[str] = None) -> Tuple[Set[str], List[str]]:
+        """
+        Extract datafields (identifiers that aren't variables or operators).
+        Returns both recognized and unrecognized datafields.
+
+        Args:
+            expression: The expression to parse
+            variables: Set of user-defined variables to exclude
+            region: Optional region context for region-aware datafield checking
+        """
+        found_datafields = set()
+        unrecognized = []
+
+        # Remove string literals first to avoid parsing their contents
+        string_pattern = r'"[^"]*"|\'[^\']*\''
+        expression_no_strings = re.sub(string_pattern, '""', expression)
+
+        # Pattern: standalone identifiers NOT followed by (
+        id_pattern = r'\b([a-zA-Z_]\w*)\b(?!\s*\()'
+
+        # Keywords to skip
+        KEYWORDS = {'if', 'else', 'then', 'and', 'or', 'not', 'true', 'false', 'null', 'nan', 'inf'}
+
+        for match in re.finditer(id_pattern, expression_no_strings.lower()):
+            identifier = match.group(1)
+
+            # Skip if it's a variable, keyword, or number
+            if identifier in variables or identifier in KEYWORDS or identifier.isdigit():
+                continue
+
+            # Skip if it's being assigned (check if followed by =)
+            pos = match.end()
+            if pos < len(expression_no_strings) and expression_no_strings[pos:].lstrip().startswith('='):
+                continue
+
+            # Check if it's an operator (some operators can be used without parentheses)
+            if identifier in self.available_operators:
+                continue
+
+            # Check if it's a known datafield
+            # Use region-aware checking if region is provided and map exists
+            if region and self.region_datafields_map:
+                # Check if (region, datafield_id) is available
+                if (region, identifier) in self.region_datafields_map:
+                    found_datafields.add(identifier)
+                else:
+                    # Unknown or unavailable in this region
+                    unrecognized.append(identifier)
+            else:
+                # Fallback to simple checking
+                if identifier in self.available_datafields:
+                    found_datafields.add(identifier)
+                else:
+                    # Unknown identifier - likely an unavailable datafield or operator
+                    unrecognized.append(identifier)
+
+        return found_datafields, unrecognized
+
+    def parse_expression_strict(self, expression: str, region: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Strict inclusion-based parsing that only includes alphas where ALL components are available.
+
+        This method:
+        1. Extracts variables defined in the expression
+        2. Identifies operators and checks availability
+        3. Identifies datafields (excluding variables) and checks availability
+        4. Excludes alpha if ANY unrecognized component is found
+
+        Args:
+            expression: The alpha expression to parse
+            region: Optional region context for region-aware datafield checking
+
+        Returns:
+            Dict with operators, datafields, inclusion status, and unrecognized components
+        """
+        if not expression or pd.isna(expression):
+            return {
+                'operators': {'unique': set(), 'nominal': Counter()},
+                'datafields': {'unique': set(), 'nominal': Counter()},
+                'should_exclude': False,
+                'exclusion_reasons': [],
+                'unrecognized_components': []
+            }
+
+        # Clean expression
+        clean_expr = ' '.join(expression.split())
+
+        # Step 1: Extract variables defined in this expression
+        variables = self._extract_variables(clean_expr)
+
+        # Step 2: Convert mathematical symbols to operators and track them
+        converted_expr, symbol_operators = self._convert_symbols_to_operators(clean_expr)
+
+        # Check if any symbol operators are unavailable
+        unavailable_symbols = []
+        for op in symbol_operators:
+            if op not in self.available_operators:
+                unavailable_symbols.append(op)
+
+        # Step 3: Extract function-style operators
+        func_operators, unavailable_func_ops = self._extract_operators_strict(converted_expr)
+
+        # Step 4: Extract datafields (excluding variables)
+        datafields, unavailable_datafields = self._extract_datafields_strict(converted_expr, variables, region)
+
+        # Step 5: Compile list of unrecognized components
+        unrecognized = []
+        if unavailable_symbols:
+            unrecognized.extend([f"operator:{op}" for op in unavailable_symbols])
+        if unavailable_func_ops:
+            unrecognized.extend([f"operator:{op}" for op in unavailable_func_ops])
+        if unavailable_datafields:
+            unrecognized.extend([f"datafield:{df}" for df in unavailable_datafields])
+
+        # Determine if we should exclude this alpha
+        should_exclude = len(unrecognized) > 0
+        exclusion_reasons = []
+        if should_exclude:
+            exclusion_reasons.append(f"Unrecognized components: {', '.join(unrecognized)}")
+
+        # Step 6: Calculate occurrence counts for available components
+        all_operators = func_operators | (symbol_operators & self.available_operators)
+        operator_counter = Counter()
+
+        # Count operator occurrences
+        for op in all_operators:
+            # Count function-style occurrences
+            count = len(re.findall(rf'\b{re.escape(op)}\s*\(', clean_expr.lower()))
+            if count > 0:
+                operator_counter[op] = count
+            # For symbol operators, count symbol occurrences
+            elif op in symbol_operators:
+                symbol = next((s for s, name in self.OPERATOR_SYMBOLS.items() if name == op), None)
+                if symbol:
+                    # Escape special regex characters in symbol
+                    escaped_symbol = re.escape(symbol)
+                    count = len(re.findall(escaped_symbol, clean_expr))
+                    if count > 0:
+                        operator_counter[op] = count
+
+        # Count datafield occurrences
+        datafield_counter = Counter()
+        for df in datafields:
+            count = len(re.findall(rf'\b{re.escape(df)}\b', clean_expr.lower()))
+            if count > 0:
+                datafield_counter[df] = count
+
+        return {
+            'operators': {
+                'unique': all_operators,
+                'nominal': operator_counter
+            },
+            'datafields': {
+                'unique': datafields,
+                'nominal': datafield_counter
+            },
+            'should_exclude': should_exclude,
+            'exclusion_reasons': exclusion_reasons,
+            'unrecognized_components': unrecognized,
+            'variables_found': list(variables)
+        }
+
+    def parse_expression(self, expression: str, region: Optional[str] = None) -> Dict[str, Dict]:
+        """
+        Parse alpha expression using strict inclusion-based approach.
+
+        This now uses the strict parser that only includes alphas where ALL
+        components can be verified as available to the user's tier.
+
         Args:
             expression: Alpha expression string
-            
+            region: Optional region context for region-aware datafield checking
+
         Returns:
-            Dictionary containing operators and datafields with unique/nominal counts, 
+            Dictionary containing operators and datafields with unique/nominal counts,
             plus exclusion flag
+        """
+        # Use the new strict parsing method
+        strict_result = self.parse_expression_strict(expression, region)
+
+        # Map to the old format for backward compatibility
+        return {
+            'operators': strict_result['operators'],
+            'datafields': strict_result['datafields'],
+            'should_exclude': strict_result['should_exclude'],
+            'exclusion_reasons': strict_result['exclusion_reasons'] if strict_result['exclusion_reasons'] else []
+        }
+
+    def parse_expression_old(self, expression: str) -> Dict[str, Dict]:
+        """
+        DEPRECATED: Old parsing method kept for reference.
+        Use parse_expression() which now calls parse_expression_strict().
         """
         if not expression or pd.isna(expression):
             return {
@@ -368,27 +650,33 @@ class AlphaExpressionParser:
                 'datafields': {'unique': set(), 'nominal': Counter()},
                 'should_exclude': False
             }
-        
+
         # Clean expression (remove extra whitespace)
         clean_expression = ' '.join(expression.split())
-        
+
         # Convert mathematical symbols to operators and get symbol-based operators
         converted_expression, symbol_operators = self._convert_symbols_to_operators(clean_expression)
-        
+
         # Find function-style operators (like ts_mean, abs, etc.)
         operator_matches = self.operator_pattern.findall(converted_expression)
         function_operators = set(match.lower() for match in operator_matches)
-        
+
         # Combine function operators with symbol operators
-        all_operators = function_operators | symbol_operators
-        
-        # Since we only match user-accessible operators, no exclusion needed
-        # All found operators are guaranteed to be available
+        all_operators_found = function_operators | symbol_operators
+
+        # Check for tier-based exclusion - exclude if alpha uses unavailable operators/datafields
         should_exclude = False
-        
-        # All found operators are already available (no filtering needed)
-        available_operators_found = all_operators
-        
+        exclusion_reasons = []
+
+        # Check operators availability
+        unavailable_operators = all_operators_found - self.available_operators
+        if unavailable_operators:
+            should_exclude = True
+            exclusion_reasons.append(f"Unavailable operators: {', '.join(sorted(unavailable_operators))}")
+
+        # Filter to only include available operators in the final result
+        available_operators_found = all_operators_found & self.available_operators
+
         # Count occurrences (for nominal counting)
         operator_counter = Counter()
         for op in available_operators_found:
@@ -401,14 +689,30 @@ class AlphaExpressionParser:
                     symbol_count = len(self.symbol_patterns[symbol].findall(clean_expression))
                     operator_counter[op] += symbol_count
             operator_counter[op] += function_count
-        
+
         unique_operators = available_operators_found
-        
+
         # Find datafields
         datafield_matches = self.datafield_pattern.findall(clean_expression)
-        datafield_counter = Counter(match.lower() for match in datafield_matches)
-        unique_datafields = set(datafield_counter.keys())
-        
+        all_datafields_found = set(match.lower() for match in datafield_matches)
+
+        # Check datafields availability
+        unavailable_datafields = all_datafields_found - self.available_datafields
+        if unavailable_datafields:
+            should_exclude = True
+            exclusion_reasons.append(f"Unavailable datafields: {', '.join(sorted(unavailable_datafields))}")
+
+        # Filter to only include available datafields in the final result
+        available_datafields_found = all_datafields_found & self.available_datafields
+
+        # Count occurrences for available datafields only
+        datafield_counter = Counter()
+        for df in available_datafields_found:
+            # Count how many times this datafield appears
+            datafield_counter[df] = clean_expression.lower().count(df.lower())
+
+        unique_datafields = available_datafields_found
+
         return {
             'operators': {
                 'unique': unique_operators,
@@ -418,7 +722,8 @@ class AlphaExpressionParser:
                 'unique': unique_datafields,
                 'nominal': datafield_counter
             },
-            'should_exclude': should_exclude
+            'should_exclude': should_exclude,
+            'exclusion_reasons': exclusion_reasons
         }
     
     def analyze_alpha_batch(self, alphas_df: pd.DataFrame) -> Dict[str, Dict]:
@@ -455,24 +760,45 @@ class AlphaExpressionParser:
         for _, row in alphas_df.iterrows():
             alpha_id = row['alpha_id']
             expression = row.get('code', '')
-            
-            # Parse expression
-            parsed = self.parse_expression(expression)
-            
+            region = row.get('region_name', None)  # Get region if available
+
+            # Parse expression with region context for region-aware datafield checking
+            parsed = self.parse_expression(expression, region)
+
             # Update statistics
             results['exclusion_stats']['total_processed'] += 1
-            
-            # All alphas are included since we only match accessible operators
-            results['exclusion_stats']['total_included'] += 1
-            
-            # Store metadata for this alpha
-            results['alpha_metadata'][alpha_id] = {
-                'operators_unique': list(parsed['operators']['unique']),
-                'operators_nominal': dict(parsed['operators']['nominal']),
-                'datafields_unique': list(parsed['datafields']['unique']),
-                'datafields_nominal': dict(parsed['datafields']['nominal']),
-                'excluded': False
-            }
+
+            # Check if alpha should be excluded based on tier restrictions
+            should_exclude = parsed.get('should_exclude', False)
+            exclusion_reasons = parsed.get('exclusion_reasons', [])
+
+            if should_exclude:
+                results['exclusion_stats']['total_excluded'] += 1
+                results['excluded_alphas'].add(alpha_id)
+
+                # Store metadata for excluded alpha
+                results['alpha_metadata'][alpha_id] = {
+                    'operators_unique': list(parsed['operators']['unique']),
+                    'operators_nominal': dict(parsed['operators']['nominal']),
+                    'datafields_unique': list(parsed['datafields']['unique']),
+                    'datafields_nominal': dict(parsed['datafields']['nominal']),
+                    'excluded': True,
+                    'exclusion_reason': '; '.join(exclusion_reasons)
+                }
+
+                # Skip processing this alpha for usage statistics
+                continue
+            else:
+                results['exclusion_stats']['total_included'] += 1
+
+                # Store metadata for included alpha
+                results['alpha_metadata'][alpha_id] = {
+                    'operators_unique': list(parsed['operators']['unique']),
+                    'operators_nominal': dict(parsed['operators']['nominal']),
+                    'datafields_unique': list(parsed['datafields']['unique']),
+                    'datafields_nominal': dict(parsed['datafields']['nominal']),
+                    'excluded': False
+                }
             
             # Process operators
             results['operators']['alpha_breakdown'][alpha_id] = dict(parsed['operators']['nominal'])
@@ -521,6 +847,49 @@ class AlphaExpressionParser:
             'exclusion_stats': results['exclusion_stats']
         }
         return serialized
+
+    def get_available_operators(self) -> Set[str]:
+        """Get set of operators available to user's tier."""
+        return self.available_operators.copy()
+
+    def get_available_datafields(self) -> Set[str]:
+        """Get set of datafields available to user's tier."""
+        return self.available_datafields.copy()
+
+    def update_available_operators(self, operators_list: List[str]):
+        """Update the available operators list (useful for dynamic tier changes)."""
+        self.available_operators = set(operators_list)
+        logger.info(f"Updated available operators: {len(self.available_operators)} operators")
+
+    def update_available_datafields(self, datafields_list: List[str]):
+        """Update the available datafields list (useful for dynamic tier changes)."""
+        self.available_datafields = set(datafields_list)
+        logger.info(f"Updated available datafields: {len(self.available_datafields)} datafields")
+
+    def check_alpha_accessibility(self, expression: str) -> Dict[str, Any]:
+        """
+        Check if an alpha expression is accessible given user's tier.
+
+        Args:
+            expression: Alpha expression string
+
+        Returns:
+            Dictionary with accessibility info:
+            {
+                'is_accessible': bool,
+                'unavailable_operators': List[str],
+                'unavailable_datafields': List[str],
+                'exclusion_reasons': List[str]
+            }
+        """
+        parsed = self.parse_expression(expression)
+
+        return {
+            'is_accessible': not parsed.get('should_exclude', False),
+            'unavailable_operators': [],  # Would need to track these separately
+            'unavailable_datafields': [],  # Would need to track these separately
+            'exclusion_reasons': parsed.get('exclusion_reasons', [])
+        }
     
     def get_top_operators(self, analysis_results: Dict, top_n: int = 20, 
                          count_type: str = 'unique') -> List[Tuple[str, int]]:
