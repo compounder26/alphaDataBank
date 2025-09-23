@@ -92,21 +92,26 @@ def insert_multiple_unsubmitted_alphas(alphas_data: List[Dict[str, Any]], region
                 # Prepare data for batch insertion (all alphas, let DB handle duplicates)
                 alpha_values = []
                 for alpha_data in alphas_data:
+                    # Convert any numpy types to Python native types
+                    self_corr = alpha_data.get('self_correlation')
+                    if self_corr is not None:
+                        self_corr = float(self_corr)
+
                     alpha_values.append((
                         alpha_data['alpha_id'],
                         region_id,
                         alpha_data.get('alpha_type', 'UNSUBMITTED'),
-                        alpha_data.get('self_correlation'),  # Will be None initially
-                        alpha_data.get('is_sharpe'),
-                        alpha_data.get('is_fitness'),
-                        alpha_data.get('is_returns'),
-                        alpha_data.get('is_drawdown'),
-                        alpha_data.get('is_longcount'),
-                        alpha_data.get('is_shortcount'),
-                        alpha_data.get('is_turnover'),
-                        alpha_data.get('is_margin'),
-                        alpha_data.get('rn_sharpe'),
-                        alpha_data.get('rn_fitness'),
+                        self_corr,  # Will be None initially or converted float
+                        float(alpha_data.get('is_sharpe')) if alpha_data.get('is_sharpe') is not None else None,
+                        float(alpha_data.get('is_fitness')) if alpha_data.get('is_fitness') is not None else None,
+                        float(alpha_data.get('is_returns')) if alpha_data.get('is_returns') is not None else None,
+                        float(alpha_data.get('is_drawdown')) if alpha_data.get('is_drawdown') is not None else None,
+                        float(alpha_data.get('is_longcount')) if alpha_data.get('is_longcount') is not None else None,
+                        float(alpha_data.get('is_shortcount')) if alpha_data.get('is_shortcount') is not None else None,
+                        float(alpha_data.get('is_turnover')) if alpha_data.get('is_turnover') is not None else None,
+                        float(alpha_data.get('is_margin')) if alpha_data.get('is_margin') is not None else None,
+                        float(alpha_data.get('rn_sharpe')) if alpha_data.get('rn_sharpe') is not None else None,
+                        float(alpha_data.get('rn_fitness')) if alpha_data.get('rn_fitness') is not None else None,
                         alpha_data.get('code'),
                         alpha_data.get('description'),
                         alpha_data.get('universe'),
@@ -466,7 +471,8 @@ def update_multiple_unsubmitted_alpha_self_correlations(correlation_results: Dic
                 for alpha_id, result in correlation_results.items():
                     max_correlation = result.get('max_correlation')
                     if max_correlation is not None:
-                        update_values.append((alpha_id, region_id, max_correlation))
+                        # Convert numpy float64 to Python float to avoid SQL formatting issues
+                        update_values.append((alpha_id, region_id, float(max_correlation)))
                 
                 if not update_values:
                     logger.info("No valid correlation values to update")
