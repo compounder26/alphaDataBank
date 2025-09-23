@@ -47,7 +47,7 @@ def create_main_layout(available_regions: List[str] = None,
             dbc.Col([
                 create_tab_selector(
                     tabs=[
-                        {'label': '📊 Expression Analysis', 'value': 'analysis-tab'},
+                        {'label': '📊 Alpha Analysis', 'value': 'analysis-tab'},
                         {'label': '🎯 Alpha Clustering', 'value': 'clustering-tab'},
                     ],
                     element_id='main-tabs',

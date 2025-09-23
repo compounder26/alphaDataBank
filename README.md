@@ -11,9 +11,36 @@ A PostgreSQL-based system for tracking and analyzing WorldQuant Brain alphas.
 
 ## Use Case
 
-- Dashboard Visualization
+### Dashboard Visualization
 
+**Operators Tab** - Explore opeartors usage patterns with statistics and interactive visualizations.
 ![Alpha Analysis Dashboard](img/dashboard_1.png)
+
+**Operator Usage Categories** - Breakdown of operators by usage frequency. Color-coded tags show all operators with usage counts for quick identification of patterns.
+![Alpha Analysis Dashboard](img/dashboard_2.png)
+
+**Datafields Tab** - Explore datafield usage patterns with statistics and interactive visualizations.
+![Alpha Analysis Dashboard](img/dashboard_3.png)
+
+**Modal Pop Up** - Click any operator or datafield to see detailed usage statistics including all alphas using it. Modal popup shows alpha IDs with direct links to the WorldQuant Brain platform for quick navigation.
+![Alpha Analysis Dashboard](img/dashboard_4.png)
+
+**Neutralization Tab**
+![Alpha Analysis Dashboard](img/dashboard_5.png)
+
+**Cross Analysis Tab** - Discover expansion opportunities by identifying unused datafield-region combinations.
+![Alpha Analysis Dashboard](img/dashboard_6.png)
+
+**Alpha Clustering Visualization**
+![Alpha Analysis Dashboard](img/dashboard_7.png)
+
+Filter by region, delay, universe, or creation date to quickly identify unused operators/datafields to help your genius performance.
+
+### Unsubmitted Alpha Filtering
+
+Fetch unsubmitted alphas to your local database and calculate self-correlations offline. 
+Example:
+- For quickly filtering super alphas by self correlation to find submission-worthy candidates.
 
 ## Setup
 
@@ -244,6 +271,8 @@ python run_analysis_dashboard.py --clear-cache
 ```bash
 python run_alpha_databank.py --unsubmitted --url "https://api.worldquantbrain.com/users/self/alphas?limit=50&offset=9800&status=UNSUBMITTED%1FIS_FAIL&order=-dateCreated&hidden=false" --all
 ```
+
+![Getting API URL from Network Tab](img/unsubmitted_link.png)
 
 ## Documentation
 

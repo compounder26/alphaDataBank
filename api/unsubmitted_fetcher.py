@@ -6,6 +6,7 @@ import pandas as pd
 import time
 import json
 import logging
+import threading
 from urllib.parse import urlparse, parse_qs
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed, Future
@@ -13,7 +14,22 @@ from .auth import check_session_valid, authenticated_get
 
 logger = logging.getLogger(__name__)
 
-def fetch_unsubmitted_alphas_from_url(session: requests.Session, url: str) -> List[Dict[str, Any]]:
+# Rate limiting configuration
+RATE_LIMIT_DELAY = 0.5  # Delay between requests in seconds
+_last_request_time = 0
+_request_lock = threading.Lock()
+
+def rate_limit():
+    """Simple rate limiter to prevent overwhelming the API."""
+    global _last_request_time
+    with _request_lock:
+        current_time = time.time()
+        time_since_last = current_time - _last_request_time
+        if time_since_last < RATE_LIMIT_DELAY:
+            time.sleep(RATE_LIMIT_DELAY - time_since_last)
+        _last_request_time = time.time()
+
+def fetch_unsubmitted_alphas_from_url(session: requests.Session, url: str, max_workers: int = 5) -> List[Dict[str, Any]]:
     """
     Fetch unsubmitted alphas from a user-provided URL.
     
@@ -75,9 +91,9 @@ def fetch_unsubmitted_alphas_from_url(session: requests.Session, url: str) -> Li
             remaining_offsets = list(range(offset + limit, total_count, limit))
             logger.info(f"Preparing {len(remaining_offsets)} batch requests with parallel processing")
             
-            # Fetch remaining batches in parallel
+            # Fetch remaining batches in parallel with reduced workers
             try:
-                with ThreadPoolExecutor(max_workers=20) as executor:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     # Submit all batch requests
                     futures: List[Future] = []
                     for batch_offset in remaining_offsets:
@@ -140,8 +156,10 @@ def _fetch_single_batch(session: requests.Session, base_url: str, clean_params: 
     """
     batch_params = clean_params.copy()
     batch_params['offset'] = str(offset)
-    
+
     try:
+        # Apply rate limiting before making the request
+        rate_limit()
         batch_response = authenticated_get(base_url, session=session, params=batch_params, timeout=60)
         batch_response.raise_for_status()
         batch_data = batch_response.json()

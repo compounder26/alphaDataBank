@@ -42,23 +42,24 @@ def get_robust_session():
     """
     # Configure retry strategy at the connection level
     retry_strategy = Retry(
-        total=False,               # Infinite retries at the connection level
-        backoff_factor=5,          # Each retry will wait 5, 10, 15... seconds  
+        total=10,                  # Maximum of 10 retries per request
+        backoff_factor=1,          # Exponential backoff: 1, 2, 4, 8, 16... seconds
         status_forcelist=[429, 500, 502, 503, 504],  # Status codes to retry on
-        allowed_methods=["GET"]    # Only retry GET requests
+        allowed_methods=["GET"],   # Only retry GET requests
+        respect_retry_after_header=True  # Honor Retry-After headers from server
     )
-    
+
     # Create adapter with connection pool settings optimized for high concurrency
     adapter = HTTPAdapter(
         pool_connections=5,        # Number of connection pools to maintain
         pool_maxsize=250,          # Support up to 250 connections per host
         max_retries=retry_strategy # Apply retry strategy
     )
-    
+
     # Create session and mount adapter for https requests
     session = requests.Session()
     session.mount("https://", adapter)
-    
+
     # Set TCP keepalive to prevent connection resets
     # Note: This might require additional system-level settings on Windows
     for protocol in session.adapters:
@@ -68,7 +69,7 @@ def get_robust_session():
                     (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
                 ]
             })
-    
+
     return session
 
 

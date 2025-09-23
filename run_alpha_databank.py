@@ -102,7 +102,7 @@ def process_unsubmitted_alphas(url: str, regions_to_process: List[str], skip_ini
     
     if not skip_alpha_fetch:
         try:
-            all_unsubmitted_alphas = fetch_unsubmitted_alphas_from_url(session, url)
+            all_unsubmitted_alphas = fetch_unsubmitted_alphas_from_url(session, url, max_workers=5)
             if all_unsubmitted_alphas:
                 print_success(f"Fetched {len(all_unsubmitted_alphas)} alphas")
                 
@@ -166,7 +166,7 @@ def process_unsubmitted_alphas(url: str, regions_to_process: List[str], skip_ini
 
                         # Use the same PNL fetching logic as submitted alphas
                         combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
-                            session, alpha_ids_for_pnl, max_workers=20
+                            session, alpha_ids_for_pnl, max_workers=10
                         )
 
                         if combined_pnl_df is not None and not combined_pnl_df.empty:
@@ -303,7 +303,7 @@ def process_unsubmitted_alphas_auto(
                             if alpha_ids_for_pnl:
                                 logging.info(f"  Fetching PNL for {len(alpha_ids_for_pnl)} alphas...")
                                 combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
-                                    session, alpha_ids_for_pnl, max_workers=20
+                                    session, alpha_ids_for_pnl, max_workers=10
                                 )
                                 if combined_pnl_df is not None and not combined_pnl_df.empty:
                                     pnl_data_dict = {}
@@ -640,7 +640,7 @@ def main():
                         combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
                             session,
                             alpha_ids_for_pnl,
-                            max_workers=20,
+                            max_workers=10,
                             progress_callback=pnl_progress_callback
                         )
 

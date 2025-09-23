@@ -125,7 +125,7 @@ def fetch_all_unsubmitted_alphas_auto(
                 request_timeout=request_timeout,
                 retry_wait_seconds=retry_wait_seconds,
                 max_retries=max_retries,
-                max_workers=20
+                max_workers=10
             )
             
             if threshold_alphas:
@@ -208,7 +208,7 @@ def _process_threshold_streaming(
             start_date=start_date,
             end_date=current_end_date,
             batch_size=batch_size,
-            max_workers=20,
+            max_workers=10,
             max_batches_per_window=200,
             request_timeout=request_timeout,
             retry_wait_seconds=retry_wait_seconds,
@@ -256,7 +256,7 @@ def _process_threshold_streaming(
                         
                         # Use existing parallel PNL fetching
                         combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
-                            session, alpha_ids_for_pnl, max_workers=20
+                            session, alpha_ids_for_pnl, max_workers=10
                         )
                         
                         if combined_pnl_df is not None and not combined_pnl_df.empty:
