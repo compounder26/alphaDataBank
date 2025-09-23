@@ -273,6 +273,14 @@ def load_operators_data(operators_file: str) -> List[str]:
     global DYNAMIC_OPERATORS_LIST
 
     try:
+        # First check if file exists and provide informative error
+        if not os.path.exists(operators_file):
+            abs_path = os.path.abspath(operators_file)
+            print(f"Error: Operators file not found at: {operators_file}")
+            print(f"Absolute path attempted: {abs_path}")
+            print(f"Current working directory: {os.getcwd()}")
+            return []
+
         operators_file_clean = operators_file.strip().lower()
 
         if operators_file_clean.endswith('.json'):

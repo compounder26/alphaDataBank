@@ -474,7 +474,10 @@ class ClusteringService:
                         break
 
                 clean_name = feat
-                for prefix in ['spiked_', 'multiscale_', 'risk_', 'metadata_']:
+                # Handle compound prefix risk_regime_ first
+                clean_name = clean_name.replace('risk_regime_', '')
+                # Then handle other prefixes
+                for prefix in ['spiked_', 'multiscale_', 'risk_', 'metadata_', 'regime_']:
                     clean_name = clean_name.replace(prefix, '')
 
                 component_features.append({

@@ -39,7 +39,8 @@ PCA_FEATURE_COLORS = {
     'spiked': '#1f77b4',      # Blue - Factor models
     'multiscale': '#2ca02c',  # Green - Temporal patterns
     'risk': '#d62728',        # Red - Risk metrics
-    'metadata': '#ff7f0e'     # Orange - Metadata
+    'metadata': '#ff7f0e',    # Orange - Metadata
+    'regime': '#9467bd'       # Purple - Regime features
 }
 
 # Chart styling defaults

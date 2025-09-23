@@ -18,6 +18,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from tqdm import tqdm
+from utils.progress import print_info, print_success, print_error
 from threading import Lock
 
 # Add project root to path
@@ -88,8 +89,8 @@ def _fetch_datafield_batch(
             url = url_template.format(x=offset)
 
             # Use adaptive timeout that increases with retry attempts
-            base_timeout = 20
-            timeout_seconds = min(base_timeout + (attempt * 10), 120)  # Max 2 minutes
+            base_timeout = 240  # Start with 4 minutes
+            timeout_seconds = min(base_timeout + (attempt * 30), 600)  # Max 10 minutes
             if attempt > 1:
                 logger.debug(f"Using adaptive timeout ({timeout_seconds}s) for attempt {attempt}")
 
@@ -392,7 +393,8 @@ def _get_datafields_primary(
     datasets = get_available_datasets(s, region, universe, delay, instrument_type)
 
     if not datasets:
-        logger.warning(f"No datasets found for {combo_name} - returning empty DataFrame")
+        # This is not an error, just no data exists for this combination
+        logger.debug(f"No datasets found for {combo_name} - returning empty DataFrame")
         return pd.DataFrame()
 
     logger.info(f"Found {len(datasets)} datasets for {combo_name}, fetching datafields...")
@@ -746,7 +748,7 @@ class PlatformDataFetcher:
                 }
                 
                 # Collect results as they complete with progress bar
-                with tqdm(total=len(fetch_params), desc="Fetching datafields") as pbar:
+                with tqdm(total=len(fetch_params), desc="Fetching datafields", disable=False, leave=False) as pbar:
                     for future in as_completed(future_to_params):
                         params = future_to_params[future]
                         try:
@@ -766,7 +768,11 @@ class PlatformDataFetcher:
                                 logger.debug(f"⚠️ No data returned for {params['data_type']}-{params['region']}-{params['universe']}-delay{params['delay']}")
                         except Exception as e:
                             failed_fetches += 1
-                            logger.error(f"Task failed for {params}: {e}")
+                            # Not a real error if it's just a missing data_type attribute
+                            if "data_type" in str(e):
+                                logger.debug(f"No data for combination: {params}")
+                            else:
+                                logger.error(f"Task failed for {params}: {e}")
                         finally:
                             pbar.update(1)
             

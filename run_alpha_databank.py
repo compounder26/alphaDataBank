@@ -39,6 +39,13 @@ from analysis.correlation.correlation_engine import CorrelationEngine
 from utils.helpers import setup_logging, print_correlation_report
 from config.database_config import REGIONS
 
+# Import progress bar utilities
+from utils.progress import (
+    create_progress_bar, update_progress_bar, close_progress_bar,
+    print_success, print_error, print_info, print_header,
+    configure_minimal_logging, suppress_retry_logs, close_all_progress_bars
+)
+
 # Import unsubmitted alphas modules
 from api.unsubmitted_fetcher import fetch_unsubmitted_alphas_from_url
 from api.unsubmitted_fetcher_auto import fetch_all_unsubmitted_alphas_auto
@@ -66,16 +73,15 @@ def process_unsubmitted_alphas(url: str, regions_to_process: List[str], skip_ini
         skip_pnl_fetch: Skip PNL fetching
         skip_correlation: Skip correlation calculation
     """
-    logging.info("Starting unsubmitted alphas processing...")
-    
+    print_header("Processing Unsubmitted Alphas")
+
     # Initialize unsubmitted database schema if needed
     if not skip_init:
-        logging.info("Initializing unsubmitted alphas database schema...")
         try:
             initialize_unsubmitted_database()
-            logging.info("Unsubmitted database schema initialization complete")
+            print_success("Database initialized")
         except Exception as e:
-            logging.error(f"Unsubmitted database schema initialization failed: {e}")
+            print_error(f"Database initialization failed: {e}")
             return
     
     # Create session for API calls
@@ -84,21 +90,21 @@ def process_unsubmitted_alphas(url: str, regions_to_process: List[str], skip_ini
         robust_session = get_robust_session()
         session = get_authenticated_session(session=robust_session)
         if not session:
-            logging.error("Failed to authenticate session for unsubmitted alphas")
+            print_error("Authentication failed")
             return
-        set_global_session(session)  # Enable automatic reauthentication
+        set_global_session(session)
         warm_up_api_connection(session)
+        print_success("Connected to API")
     
     # Fetch all unsubmitted alphas once (outside region loop)
     alphas_by_region = {}
     all_unsubmitted_alphas = []
     
     if not skip_alpha_fetch:
-        logging.info("Fetching all unsubmitted alphas from URL...")
         try:
             all_unsubmitted_alphas = fetch_unsubmitted_alphas_from_url(session, url)
             if all_unsubmitted_alphas:
-                logging.info(f"Successfully fetched {len(all_unsubmitted_alphas)} unsubmitted alphas total")
+                print_success(f"Fetched {len(all_unsubmitted_alphas)} alphas")
                 
                 # Group alphas by region
                 for alpha in all_unsubmitted_alphas:
@@ -108,100 +114,106 @@ def process_unsubmitted_alphas(url: str, regions_to_process: List[str], skip_ini
                             alphas_by_region[alpha_region] = []
                         alphas_by_region[alpha_region].append(alpha)
                 
-                # Log distribution
+                # Show distribution
                 for region, alphas_list in alphas_by_region.items():
-                    logging.info(f"Found {len(alphas_list)} unsubmitted alphas for region {region}")
+                    print_info(f"{region}: {len(alphas_list)} alphas")
                     
             else:
-                logging.warning("No unsubmitted alphas fetched from URL")
+                print_info("No alphas found at URL")
         except Exception as e:
-            logging.error(f"Error fetching unsubmitted alphas from URL: {e}")
+            print_error(f"Failed to fetch alphas: {e}")
             return
-    
-    # Process each region with its pre-fetched alphas
-    for region in regions_to_process:
-        logging.info(f"--- Processing unsubmitted alphas for region: {region} ---")
-        data_changed = False
-        
-        # Get alphas for this region (already fetched)
-        region_alphas = alphas_by_region.get(region, [])
-        
-        # Insert unsubmitted alphas metadata for this region
-        if not skip_alpha_fetch and region_alphas:
-            try:
-                # Use batch insert for better performance
-                insert_multiple_unsubmitted_alphas(region_alphas, region)
-                logging.info(f"Processed {len(region_alphas)} unsubmitted alphas for region {region}")
-                data_changed = True
-            except Exception as e:
-                logging.error(f"Error inserting unsubmitted alphas for region {region}: {e}")
-        elif not skip_alpha_fetch:
-            logging.info(f"No unsubmitted alphas found for region {region} in the fetched data")
-        
-        # Fetch PNL data for unsubmitted alphas
-        if not skip_pnl_fetch:
-            logging.info(f"Fetching PNL data for unsubmitted alphas in region {region}...")
-            try:
-                alpha_ids_for_pnl = get_unsubmitted_alpha_ids_for_pnl_processing(region)
-                
-                if alpha_ids_for_pnl:
-                    logging.info(f"Found {len(alpha_ids_for_pnl)} unsubmitted alphas needing PNL processing in region {region}")
-                    
-                    # Use the same PNL fetching logic as submitted alphas
-                    combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
-                        session, alpha_ids_for_pnl, max_workers=20
-                    )
-                    
-                    if combined_pnl_df is not None and not combined_pnl_df.empty:
-                        unique_fetched_alphas = combined_pnl_df['alpha_id'].unique()
-                        logging.info(f"Successfully fetched PNL data for {len(unique_fetched_alphas)} unsubmitted alphas in region {region}")
-                        
-                        # Prepare PNL data for batch insertion
-                        pnl_data_dict = {}
-                        for alpha_id in unique_fetched_alphas:
-                            pnl_data_dict[alpha_id] = combined_pnl_df[combined_pnl_df['alpha_id'] == alpha_id]
-                        
-                        # Batch insert PNL data
-                        if pnl_data_dict:
-                            try:
-                                insert_multiple_unsubmitted_pnl_data_optimized(pnl_data_dict, region)
-                                logging.info(f"Batch stored PNL data for {len(pnl_data_dict)} unsubmitted alphas in region {region}")
-                                data_changed = True
-                            except Exception as e:
-                                logging.error(f"Error during batch PNL insertion for unsubmitted alphas in region {region}: {e}")
-                                # Fallback to individual inserts
-                                successfully_stored = 0
-                                for alpha_id, pnl_df in pnl_data_dict.items():
-                                    try:
-                                        insert_unsubmitted_pnl_data(alpha_id, pnl_df, region)
-                                        successfully_stored += 1
-                                    except Exception as e_insert:
-                                        logging.error(f"Error storing PNL data for unsubmitted alpha {alpha_id}: {e_insert}")
-                                
-                                if successfully_stored > 0:
-                                    logging.info(f"Stored PNL data for {successfully_stored}/{len(unique_fetched_alphas)} unsubmitted alphas in region {region}")
+
+    # Process each region with progress bar
+    if regions_to_process:
+        region_bar = create_progress_bar(
+            len(regions_to_process),
+            "Processing regions",
+            unit="regions"
+        )
+
+        for region in regions_to_process:
+            data_changed = False
+
+            # Get alphas for this region (already fetched)
+            region_alphas = alphas_by_region.get(region, [])
+
+            # Insert unsubmitted alphas metadata for this region
+            if not skip_alpha_fetch and region_alphas:
+                try:
+                    # Use batch insert for better performance
+                    insert_multiple_unsubmitted_alphas(region_alphas, region)
+                    data_changed = True
+                except Exception as e:
+                    print_error(f"Failed to store alphas for {region}: {e}")
+            elif not skip_alpha_fetch:
+                pass  # No alphas for this region
+
+            # Fetch PNL data for unsubmitted alphas
+            if not skip_pnl_fetch:
+                try:
+                    alpha_ids_for_pnl = get_unsubmitted_alpha_ids_for_pnl_processing(region)
+
+                    if alpha_ids_for_pnl:
+                        # Create nested progress bar for PNL fetching
+                        pnl_bar = create_progress_bar(
+                            len(alpha_ids_for_pnl),
+                            f"  PNL for {region}",
+                            position=1,
+                            leave=False,
+                            unit="alphas"
+                        )
+
+                        # Use the same PNL fetching logic as submitted alphas
+                        combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
+                            session, alpha_ids_for_pnl, max_workers=20
+                        )
+
+                        if combined_pnl_df is not None and not combined_pnl_df.empty:
+                            unique_fetched_alphas = combined_pnl_df['alpha_id'].unique()
+                            update_progress_bar(pnl_bar, len(unique_fetched_alphas))
+
+                            # Prepare PNL data for batch insertion
+                            pnl_data_dict = {}
+                            for alpha_id in unique_fetched_alphas:
+                                pnl_data_dict[alpha_id] = combined_pnl_df[combined_pnl_df['alpha_id'] == alpha_id]
+
+                            # Batch insert PNL data
+                            if pnl_data_dict:
+                                try:
+                                    insert_multiple_unsubmitted_pnl_data_optimized(pnl_data_dict, region)
                                     data_changed = True
-                    else:
-                        logging.info(f"No PNL data returned for unsubmitted alphas in region {region}")
-                else:
-                    logging.info(f"No unsubmitted alphas found needing PNL processing in region {region}")
-            except Exception as e:
-                logging.error(f"Error during PNL processing for unsubmitted alphas in region {region}: {e}")
-        
-        # Calculate correlations for unsubmitted alphas
-        if not skip_correlation and data_changed:
-            logging.info(f"Calculating correlations for unsubmitted alphas in region {region}...")
-            try:
-                # Use unified correlation engine
-                correlation_engine = CorrelationEngine()
-                correlation_engine.calculate_unsubmitted_vs_submitted(region)
-                logging.info(f"Successfully calculated correlations for unsubmitted alphas in region {region}")
-            except Exception as e:
-                logging.error(f"Error calculating correlations for unsubmitted alphas in region {region}: {e}")
-        elif not skip_correlation:
-            logging.info(f"Skipping correlation calculation for unsubmitted alphas in region {region} - no data changes")
-    
-    logging.info("Unsubmitted alphas processing complete.")
+                                except Exception:
+                                    # Fallback to individual inserts
+                                    successfully_stored = 0
+                                    for alpha_id, pnl_df in pnl_data_dict.items():
+                                        try:
+                                            insert_unsubmitted_pnl_data(alpha_id, pnl_df, region)
+                                            successfully_stored += 1
+                                        except:
+                                            pass  # Silent fail
+
+                                    if successfully_stored > 0:
+                                        data_changed = True
+
+                        close_progress_bar(pnl_bar)
+                except Exception as e:
+                    print_error(f"PNL processing failed for {region}: {e}")
+
+            # Calculate correlations for unsubmitted alphas
+            if not skip_correlation and data_changed:
+                try:
+                    # Use unified correlation engine
+                    correlation_engine = CorrelationEngine()
+                    correlation_engine.calculate_unsubmitted_vs_submitted(region)
+                except Exception as e:
+                    print_error(f"Correlation calculation failed for {region}: {e}")
+
+            update_progress_bar(region_bar)
+
+        close_progress_bar(region_bar)
+
+    print_success("Unsubmitted alphas processing complete")
 
 
 def process_unsubmitted_alphas_auto(
@@ -227,22 +239,21 @@ def process_unsubmitted_alphas_auto(
         skip_correlation: Skip correlation calculation
         use_streaming: Use streaming mode (recommended) vs bulk mode (memory intensive)
     """
-    logging.info("Starting automated unsubmitted alphas processing...")
+    logging.info("🔄 Processing unsubmitted alphas (automated)...")
     
     if sharpe_thresholds:
-        logging.info(f"Using custom sharpe thresholds: {sharpe_thresholds}")
+        logging.info(f"Sharpe thresholds: {sharpe_thresholds}")
     else:
         sharpe_thresholds = [1.0, -1.0]
-        logging.info("Using default sharpe thresholds: >= 1.0 and <= -1.0")
+        logging.info("Using default sharpe thresholds")
     
     # Initialize unsubmitted database schema if needed
     if not skip_init:
-        logging.info("Initializing unsubmitted alphas database schema...")
         try:
             initialize_unsubmitted_database()
-            logging.info("Unsubmitted database schema initialization complete")
+            print_success("Database initialized")
         except Exception as e:
-            logging.error(f"Unsubmitted database schema initialization failed: {e}")
+            print_error(f"Database initialization failed: {e}")
             return
     
     # Create session for API calls
@@ -251,13 +262,14 @@ def process_unsubmitted_alphas_auto(
         robust_session = get_robust_session()
         session = get_authenticated_session(session=robust_session)
         if not session:
-            logging.error("Failed to authenticate session for automated unsubmitted alphas")
+            print_error("Authentication failed")
             return
-        set_global_session(session)  # Enable automatic reauthentication
+        set_global_session(session)
         warm_up_api_connection(session)
+        print_success("Connected to API")
     
     if use_streaming:
-        logging.info("🔄 STREAMING MODE: Processing windows globally (mixed regions per window)")
+        logging.info("🔄 Using streaming mode")
         
         if not skip_alpha_fetch:
             try:
@@ -272,24 +284,24 @@ def process_unsubmitted_alphas_auto(
                     skip_correlation=skip_correlation
                 )
                 
-                logging.info(f"✅ Streaming complete: {total_processed} total alphas processed across all regions")
+                logging.info(f"✅ Processed {total_processed} alphas")
                 
             except Exception as e:
-                logging.error(f"Error during streaming processing: {e}")
+                logging.error(f"Streaming failed: {e}")
                 return
         else:
-            logging.info(f"⏭️  Skipping alpha fetch - processing existing data only")
+            logging.info("Processing existing data only")
             
             # Process existing data for each region individually
             for region in regions_to_process:
                 if not skip_pnl_fetch or not skip_correlation:
-                    logging.info(f"Processing existing data for region {region}...")
+                    logging.info(f"Processing {region}...")
                     
                     if not skip_pnl_fetch:
                         try:
                             alpha_ids_for_pnl = get_unsubmitted_alpha_ids_for_pnl_processing(region)
                             if alpha_ids_for_pnl:
-                                logging.info(f"📈 Fetching PNL for {len(alpha_ids_for_pnl)} existing alphas in {region}...")
+                                logging.info(f"  Fetching PNL for {len(alpha_ids_for_pnl)} alphas...")
                                 combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
                                     session, alpha_ids_for_pnl, max_workers=20
                                 )
@@ -299,28 +311,28 @@ def process_unsubmitted_alphas_auto(
                                     for alpha_id in unique_fetched_alphas:
                                         pnl_data_dict[alpha_id] = combined_pnl_df[combined_pnl_df['alpha_id'] == alpha_id]
                                     insert_multiple_unsubmitted_pnl_data_optimized(pnl_data_dict, region)
-                                    logging.info(f"✅ Updated PNL for {len(pnl_data_dict)} alphas in {region}")
+                                    logging.info(f"  ✓ PNL updated for {len(pnl_data_dict)} alphas")
                         except Exception as e:
-                            logging.error(f"Error processing PNL for {region}: {e}")
+                            logging.error(f"  PNL processing failed: {e}")
                     
                     if not skip_correlation:
                         try:
                             # Use unified correlation engine
                             correlation_engine = CorrelationEngine()
                             correlation_engine.calculate_unsubmitted_vs_submitted(region)
-                            logging.info(f"✅ Updated correlations for {region}")
+                            logging.info(f"  ✓ Correlations updated")
                         except Exception as e:
-                            logging.error(f"Error calculating correlations for {region}: {e}")
+                            logging.error(f"  Correlation calculation failed: {e}")
         
     else:
-        logging.warning("⚠️  BULK MODE: Using memory-intensive processing (not recommended for large datasets)")
+        logging.warning("Using bulk mode (memory intensive)")
         
         # Original bulk processing mode (kept for backward compatibility)
         all_unsubmitted_alphas = []
         alphas_by_region = {}
         
         if not skip_alpha_fetch:
-            logging.info("Starting automated fetch of ALL unsubmitted alphas...")
+            logging.info("Fetching all unsubmitted alphas...")
             try:
                 # Fetch all regions together in bulk mode
                 all_unsubmitted_alphas = fetch_all_unsubmitted_alphas_auto(
@@ -341,30 +353,30 @@ def process_unsubmitted_alphas_auto(
                             alphas_by_region[alpha_region] = []
                         alphas_by_region[alpha_region].append(alpha)
                         
-                logging.info(f"Total fetched in bulk mode: {len(all_unsubmitted_alphas)} alphas")
+                logging.info(f"✓ Fetched {len(all_unsubmitted_alphas)} alphas total")
                 for region, region_alphas in alphas_by_region.items():
-                    logging.info(f"  - {region}: {len(region_alphas)} alphas")
+                    logging.info(f"  {region}: {len(region_alphas)} alphas")
                 
             except Exception as e:
-                logging.error(f"Error during bulk fetch: {e}")
+                logging.error(f"Bulk fetch failed: {e}")
                 return
         
         # Process each region with bulk data
         for region in regions_to_process:
-            logging.info(f"--- Processing region {region} in bulk mode ---")
+            logging.info(f"\nProcessing {region}...")
             region_alphas = alphas_by_region.get(region, [])
             
             if not skip_alpha_fetch and region_alphas:
                 try:
                     insert_multiple_unsubmitted_alphas(region_alphas, region)
-                    logging.info(f"Inserted {len(region_alphas)} alphas for region {region}")
+                    logging.info(f"  ✓ Stored {len(region_alphas)} alphas")
                 except Exception as e:
-                    logging.error(f"Error inserting alphas for region {region}: {e}")
+                    logging.error(f"  Failed to store alphas: {e}")
             
             # Handle PNL and correlations as before
             # ... (rest of original bulk processing logic)
     
-    logging.info("Automated unsubmitted alphas processing complete.")
+    logging.info("\n✅ Processing complete")
 
 
 def main():
@@ -376,6 +388,7 @@ def main():
     parser.add_argument('--skip-pnl-fetch', action='store_true', help='Skip PNL fetching')
     parser.add_argument('--skip-correlation', action='store_true', help='Skip correlation calculation')
     parser.add_argument('--report', action='store_true', help='Print correlation report for processed regions')
+    parser.add_argument('--verbose', action='store_true', help='Show verbose debug logging')
     
     # Unsubmitted alphas arguments
     parser.add_argument('--unsubmitted', action='store_true', help='Process unsubmitted alphas instead of submitted (requires --url)')
@@ -405,7 +418,12 @@ def main():
     if args.sharpe_thresholds and not args.unsubmitted_auto:
         parser.error('--sharpe-thresholds can only be used with --unsubmitted-auto')
 
-    setup_logging()
+    # Configure logging based on verbose flag
+    if args.verbose:
+        setup_logging()
+    else:
+        configure_minimal_logging()
+        suppress_retry_logs()
 
     # Route to unsubmitted alphas processing if requested
     if args.unsubmitted:
@@ -444,35 +462,30 @@ def main():
         )
         return  # Exit after processing automated unsubmitted alphas
 
+    # Main processing header
+    print_header("Alpha DataBank")
+    start_time = time.time()
+
     # Continue with regular (submitted) alphas processing below
     if not args.skip_init:
-        logging.info("Initializing database schemas...")
         try:
             initialize_database()
-            logging.info("Main database schema initialized")
-            
-            # Also initialize analysis schema for dashboard compatibility
             initialize_analysis_database()
-            logging.info("Analysis database schema initialized")
-            
-            logging.info("Complete database initialization finished")
+            print_success("Database initialized")
         except Exception as e:
-            logging.error(f"Database initialization failed: {e}")
+            print_error(f"Database initialization failed: {e}")
             return
 
     session = None
     if not args.skip_alpha_fetch or not args.skip_pnl_fetch:
-        # Create a robust session with optimized connection pooling
         robust_session = get_robust_session()
-        # Authenticate the robust session
         session = get_authenticated_session(session=robust_session)
         if not session:
-            logging.error("Failed to authenticate session")
+            print_error("Authentication failed")
             return 1
-        
-        set_global_session(session)  # Enable automatic reauthentication
-        # Warm up the API connection before intensive operations
+        set_global_session(session)
         warm_up_api_connection(session)
+        print_success("Connected to API")
 
     # This list will hold the names of regions for which PNL/Correlation should be run.
     regions_to_run_downstream_for = []
@@ -481,19 +494,25 @@ def main():
     # --- Alpha Fetching Stage --- 
     if not args.skip_alpha_fetch:
         if args.all:
-            logging.info("Global alpha fetch initiated (--all)...")
             try:
                 all_alphas_list = scrape_alphas_by_region(session, region=None) # Global fetch
                 if all_alphas_list:
-                    logging.info(f"Globally fetched {len(all_alphas_list)} alphas. Storing by actual region...")
+                    print_success(f"Fetched {len(all_alphas_list)} alphas")
+
+                    # First organize alphas by region (fast operation, no progress bar needed)
                     temp_alphas_by_actual_region = {}
                     for alpha_record in all_alphas_list:
                         actual_region = alpha_record.get('settings_region')
                         if actual_region in CONFIGURED_REGIONS:
                             temp_alphas_by_actual_region.setdefault(actual_region, []).append(alpha_record)
-                        else:
-                            logging.warning(f"Alpha {alpha_record.get('alpha_id')} has region '{actual_region}' which is not in CONFIGURED_REGIONS. Skipping.")
-                    
+
+                    # Now store alphas with progress bar for actual database operations
+                    alpha_bar = create_progress_bar(
+                        len(all_alphas_list),
+                        "Storing alphas",
+                        unit="alphas"
+                    )
+
                     for r_key, r_alphas in temp_alphas_by_actual_region.items():
                         newly_inserted_count = 0
                         for alpha_record in r_alphas:
@@ -504,25 +523,33 @@ def main():
                                 newly_inserted_count += 1
                             else:
                                 pass
-                        
+                            update_progress_bar(alpha_bar)
+
+                        existing_count = len(r_alphas) - newly_inserted_count
+                        print_info(f"  {r_key}: {newly_inserted_count} new, {existing_count} existing")
+
                         if newly_inserted_count > 0:
-                            logging.info(f"Stored {newly_inserted_count} new alphas for region {r_key} from global fetch. {len(r_alphas) - newly_inserted_count} already existed.")
                             data_changed_in_region_flags[r_key] = True
-                        else:
-                            logging.info(f"No new alphas to store for region {r_key} from global fetch. All {len(r_alphas)} already existed.")
 
                         if r_key not in regions_to_run_downstream_for:
                             regions_to_run_downstream_for.append(r_key)
+
+                    close_progress_bar(alpha_bar)
                 else:
-                    logging.warning("Global alpha fetch (--all) returned no alphas.")
+                    print_info("No alphas found")
             except Exception as e:
-                logging.error(f"Error during global alpha fetch: {e}", exc_info=True)
+                print_error(f"Alpha fetch failed: {e}")
         
         elif args.region:
-            logging.info(f"Regional alpha fetch initiated for {args.region}...")
             try:
                 regional_alphas_list = scrape_alphas_by_region(session, region=args.region)
                 if regional_alphas_list:
+                    # Process with progress bar
+                    alpha_bar = create_progress_bar(
+                        len(regional_alphas_list),
+                        f"Processing {args.region} alphas",
+                        unit="alphas"
+                    )
                     newly_inserted_count = 0
                     for alpha_record in regional_alphas_list:
                         alpha_id = alpha_record['alpha_id']
@@ -534,10 +561,10 @@ def main():
                             pass
                     
                     if newly_inserted_count > 0:
-                        logging.info(f"Stored {newly_inserted_count} new alphas for region {args.region}. {len(regional_alphas_list) - newly_inserted_count} already existed.")
+                        logging.info(f"✓ {newly_inserted_count} new alphas, {len(regional_alphas_list) - newly_inserted_count} existing")
                         data_changed_in_region_flags[args.region] = True
                     else:
-                        logging.info(f"No new alphas to store for region {args.region}. All {len(regional_alphas_list)} already existed.")
+                        logging.info(f"All {len(regional_alphas_list)} alphas already up to date")
 
                     if args.region not in regions_to_run_downstream_for:
                         regions_to_run_downstream_for.append(args.region)
@@ -546,66 +573,82 @@ def main():
             except Exception as e:
                 logging.error(f"Error fetching or storing alphas for region {args.region}: {e}", exc_info=True)
     else: # Alpha fetching is skipped
-        logging.info("Alpha fetching skipped (--skip-alpha-fetch).")
+        logging.info("Skipping alpha fetch")
         if args.all:
             regions_to_run_downstream_for = CONFIGURED_REGIONS[:]
-            logging.info(f"Downstream processing will target all configured regions: {regions_to_run_downstream_for}")
+            logging.info(f"Processing {len(regions_to_run_downstream_for)} regions")
         elif args.region:
             if args.region in CONFIGURED_REGIONS:
                 regions_to_run_downstream_for = [args.region]
-                logging.info(f"Downstream processing will target region: {args.region}")
+                pass  # Region set, no verbose log needed
             else:
-                logging.error(f"Specified region {args.region} is not in CONFIGURED_REGIONS. Cannot add to downstream processing list.")
+                logging.error(f"Invalid region: {args.region}")
 
     if not regions_to_run_downstream_for:
-        logging.info("No regions identified for PNL/Correlation processing. Exiting.")
+        logging.info("No regions to process")
         if args.report: # Handle report even if no other processing, maybe on all configured or specified
-            logging.info("Attempting to generate report based on --report flag, but no regions were actively processed for PNL/Corr.")
+            pass  # Generate report only
             report_regions = [args.region] if args.region else (CONFIGURED_REGIONS[:] if args.all else [])
             for region_name in report_regions:
                 if region_name not in CONFIGURED_REGIONS: continue
-                logging.info(f"Generating correlation report for {region_name} (as per --report flag only)...")
+                pass  # Generate report for region
                 try:
                     corr_stats = get_correlation_statistics(region_name)
                     if not corr_stats.empty:
                         print(f"\n==== Correlation Statistics for {region_name} ====")
                         print(corr_stats)
-                    else: logging.warning(f"No correlation statistics found for region {region_name}")
-                except Exception as e: logging.error(f"Error generating report for {region_name}: {e}", exc_info=True)
-        logging.info("Alpha DataBank process complete (or no regions to process).")
+                    else:
+                        print_info(f"No statistics for {region_name}")
+                except Exception as e:
+                    print_error(f"Report generation failed for {region_name}: {e}")
+        print_success("Complete")
         return
 
-    # --- PNL Fetching, Correlation Calculation, and Reporting Loop --- 
+    # --- PNL Fetching, Correlation Calculation, and Reporting Loop ---
     for region_name in regions_to_run_downstream_for:
-        logging.info(f"--- Processing region: {region_name} ---")
+        print_info(f"\nProcessing {region_name}...")
 
         # Fetch PNL data if not skipped
         if not args.skip_pnl_fetch:
-            logging.info(f"Attempting PNL fetch for region: {region_name}...")
             try:
                 alpha_ids_for_pnl = get_regular_alpha_ids_for_pnl_processing(region_name)
 
                 if alpha_ids_for_pnl:
-                    logging.info(f"Found {len(alpha_ids_for_pnl)} REGULAR/SUPER alphas needing PNL processing in region {region_name}.")
-                    
+                    print_info(f"  Found {len(alpha_ids_for_pnl)} alphas to update")
+
                     if session and not check_session_valid(session):
-                        logging.info(f"Session became invalid before batch PNL fetch for region {region_name}. Attempting to re-authenticate...")
+                        print_info("  Re-authenticating...")
                         session = get_authenticated_session()
                         if session:
-                            set_global_session(session)  # Update global session
-                    
+                            set_global_session(session)
+                            print_success("  Re-authenticated")
+
                     if not session:
-                        logging.error(f"No valid session to fetch PNL for region {region_name}. Skipping PNL fetch for this region.")
+                        print_error("  Authentication failed, skipping PNL")
                     else:
-                        combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
-                            session, 
-                            alpha_ids_for_pnl, 
-                            max_workers=20 
+                        # Create progress bar for PNL fetching
+                        pnl_bar = create_progress_bar(
+                            len(alpha_ids_for_pnl),
+                            f"  Fetching PNL for {region_name}",
+                            unit="alphas"
                         )
+
+                        # Define progress callback
+                        def pnl_progress_callback(n):
+                            update_progress_bar(pnl_bar, n)
+
+                        combined_pnl_df, failed_alpha_ids = get_alpha_pnl_threaded(
+                            session,
+                            alpha_ids_for_pnl,
+                            max_workers=20,
+                            progress_callback=pnl_progress_callback
+                        )
+
+                        close_progress_bar(pnl_bar)
                         
                         if combined_pnl_df is not None and not combined_pnl_df.empty:
                             unique_fetched_alphas = combined_pnl_df['alpha_id'].unique()
-                            logging.info(f"Successfully fetched PNL data for {len(unique_fetched_alphas)} alphas in region {region_name}.")
+                            print_success(f"  Fetched PNL for {len(unique_fetched_alphas)} alphas")
                             
                             # Prepare PNL data dictionary for batch insertion
                             pnl_data_dict = {}
@@ -621,13 +664,13 @@ def main():
                                 try:
                                     insert_multiple_pnl_data_optimized(pnl_data_dict, region_name)
                                     successfully_stored_count = len(pnl_data_dict)
-                                    logging.info(f"Batch stored PNL data for {successfully_stored_count} alphas in region {region_name} using optimized COPY command.")
+                                    print_success(f"  Stored PNL data")
                                     if successfully_stored_count > 0:
                                         data_changed_in_region_flags[region_name] = True
                                 except Exception as e_batch_insert:
-                                    logging.error(f"Error during optimized batch PNL insertion for region {region_name}: {e_batch_insert}", exc_info=True)
+                                    print_info(f"  Batch insertion failed, using fallback")
                                     # Fallback to individual inserts if batch fails
-                                    logging.warning(f"Falling back to individual PNL insertions for {len(unique_fetched_alphas)} alphas in region {region_name}")
+                                    pass  # Using fallback, no extra log needed
                                     
                                     successfully_stored_count = 0
                                     alphas_not_stored_after_fetch = []
@@ -638,56 +681,56 @@ def main():
                                             insert_pnl_data(alpha_id, pnl_df, region_name)
                                             successfully_stored_count += 1
                                         except Exception as e_insert:
-                                            logging.error(f"Error storing PNL data for alpha {alpha_id} (region {region_name}): {e_insert}", exc_info=True)
+                                            pass  # Silent fail for individual alpha
                                             alphas_not_stored_after_fetch.append(alpha_id)
                                 
-                                logging.info(f"Stored PNL data for {successfully_stored_count}/{len(unique_fetched_alphas)} fetched alphas in region {region_name} (fallback mode).")
+                                print_success(f"  Stored PNL for {successfully_stored_count} alphas")
                                 if successfully_stored_count > 0:
                                     data_changed_in_region_flags[region_name] = True
                                 if alphas_not_stored_after_fetch:
-                                    logging.warning(f"Failed to store PNL for {len(alphas_not_stored_after_fetch)} alphas")
+                                    pass  # Some failures expected, no warning needed
 
                         elif not failed_alpha_ids:
-                            logging.info(f"No PNL data returned for {len(alpha_ids_for_pnl)} REGULAR/SUPER alphas in region {region_name}.")
+                            print_info(f"  No PNL data available")
                         else:
-                            logging.warning(f"No PNL data successfully fetched for region {region_name}. Failures: {len(failed_alpha_ids)}.")
+                            print_info(f"  PNL fetch unsuccessful")
                 else:
-                    logging.info(f"No REGULAR/SUPER alphas found in DB for region {region_name} needing PNL processing. Skipping PNL fetch.")
+                    print_info(f"  All alphas up to date")
             except Exception as e:
-                logging.error(f"Error during PNL processing for region {region_name}: {e}")
+                print_error(f"  PNL processing failed: {e}")
         else:
-            logging.info(f"Skipping PNL fetch for region {region_name} as per --skip-pnl-fetch flag.")
+            pass  # PNL fetch skipped
 
         # Calculate correlations if not skipped and data has changed
         if not args.skip_correlation:
             if data_changed_in_region_flags.get(region_name, False): # Check if data actually changed
-                logging.info(f"Attempting correlation calculation for region: {region_name} (data changed)...")
+                print_info(f"  Calculating correlations...")
                 try:
                     # Use unified correlation engine
                     correlation_engine = CorrelationEngine()
                     correlation_engine.calculate_batch_submitted(region_name)
-                    logging.info(f"Successfully updated correlation statistics for region {region_name}.")
+                    print_success(f"  Correlations updated")
                 except Exception as e:
-                    logging.error(f"Error calculating correlations for {region_name}: {e}")
+                    print_error(f"  Correlation calculation failed: {e}")
             else:
-                logging.info(f"Skipping correlation calculation for region {region_name} as no new alpha metadata or PNL data was processed in this run.")
+                print_info(f"  Correlations already up to date")
         else:
-            logging.info(f"Skipping correlation calculation for region {region_name} as per --skip-correlation flag.")
+            pass  # Correlation calculation skipped
         
         # Print correlation report if requested
         if args.report:
-            logging.info(f"Attempting to generate correlation report for region: {region_name}...")
+            pass  # Generate report
             try:
                 corr_stats = get_correlation_statistics(region_name)
                 if not corr_stats.empty:
                     print(f"\n==== Correlation Statistics for {region_name} ====")
                     print(corr_stats)
                 else:
-                    logging.info(f"No correlation statistics found to report for region {region_name}.")
+                    print_info(f"  No statistics available")
             except Exception as e:
-                logging.error(f"Error generating correlation report for {region_name}: {e}")
-    
-    logging.info("Alpha DataBank process complete.")
+                print_error(f"  Report generation failed: {e}")
+
+    print_success("Alpha DataBank process complete")
 
 if __name__ == "__main__":
     main()

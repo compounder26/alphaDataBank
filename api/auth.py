@@ -404,6 +404,31 @@ def authenticate_existing_session(s):
                     input("Biometrics authentication is not complete. Please try again and press any key when completed \n")
                 else:
                     break
+
+            # After biometric auth completes, wait for token to be ready
+            print("\nBiometric authentication completed. Waiting for token...")
+            max_wait = 60  # Maximum 60 seconds to wait
+            wait_interval = 2  # Check every 2 seconds
+            elapsed = 0
+
+            while elapsed < max_wait:
+                timeout_remaining = check_session_timeout(s)
+                if timeout_remaining > 0:
+                    print(f"Token ready! Session active with {timeout_remaining} seconds remaining.")
+                    save_cookies(s)
+                    return s
+
+                time.sleep(wait_interval)
+                elapsed += wait_interval
+                if elapsed % 10 == 0:  # Print progress every 10 seconds
+                    print(f"Still waiting for token... ({elapsed}s elapsed)")
+
+            # If we get here, token didn't become available in time
+            print(f"Warning: Token not available after {max_wait} seconds.")
+            print("Saving cookies anyway - try running the command again.")
+            save_cookies(s)
+            return s
+
         else:
             print("\nIncorrect email or password\n")
             os.remove(CREDENTIALS_FILE_PATH)  # Clear saved credentials
@@ -411,24 +436,9 @@ def authenticate_existing_session(s):
             s.auth = get_credentials()
             return authenticate_existing_session(s)
 
-    # After authentication, verify the session is actually valid before saving cookies
-    # Wait longer initially for token propagation after biometric auth
-    print("Waiting for authentication token to propagate...")
-    time.sleep(5)
-
-    # Use check_session_valid with retry logic for 204 responses
-    # This will handle the progressive delays automatically
-    if check_session_valid(s, retry_on_204=True):
-        print(f"Authentication successful! Session is now active.")
-        save_cookies(s)
-        return s
-    else:
-        # If check_session_valid fails after all retries, still save cookies
-        # as they may become valid shortly after
-        print("Warning: Authentication completed but token validation is still pending.")
-        print("Cookies saved. The session should work on the next attempt.")
-        save_cookies(s)
-        return s
+    # For non-biometric auth (or if no auth needed), just save cookies and return
+    save_cookies(s)
+    return s
 
 
 def start_session():

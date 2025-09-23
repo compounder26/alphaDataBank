@@ -6,7 +6,11 @@ from the WorldQuant Brain API. Extracted from run_analysis_dashboard.py to impro
 code organization and reusability.
 """
 import os
+import logging
 from typing import Tuple, Optional
+
+# Suppress verbose logging from platform data fetcher
+logging.getLogger('api.platform_data_fetcher').setLevel(logging.ERROR)
 
 
 def fetch_dynamic_platform_data(force_refresh: bool = False) -> Tuple[Optional[str], Optional[bool], bool]:

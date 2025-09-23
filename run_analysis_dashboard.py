@@ -79,12 +79,14 @@ def main():
             # Check if operators file exists for dashboard use
             operators_file_path = "data/operators_dynamic.json"
             if os.path.exists(operators_file_path):
-                dynamic_operators_file = operators_file_path
+                # Convert to absolute path to avoid path resolution issues
+                dynamic_operators_file = os.path.abspath(operators_file_path)
     else:
         # Check if operators/datafields exist (for first-time use auto-fetch)
         operators_file_path = "data/operators_dynamic.json"
         if os.path.exists(operators_file_path):
-            dynamic_operators_file = operators_file_path
+            # Convert to absolute path to avoid path resolution issues
+            dynamic_operators_file = os.path.abspath(operators_file_path)
             using_dynamic_data = True
         else:
             print("ℹ️ No operators/datafields found. Run with --renew to fetch them.")

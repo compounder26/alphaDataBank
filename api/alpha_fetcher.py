@@ -380,6 +380,7 @@ def get_alpha_pnl(session: requests.Session, alpha_id: str) -> pd.DataFrame:
     brain_api_url = "https://api.worldquantbrain.com"
     default_retry_seconds = 15  # Base retry time if not specified by API
     max_backoff_seconds = 300  # Maximum backoff time (5 minutes)
+    max_retries = 10  # Maximum number of retries before logging an error
 
     # Check if we need to wait before making this request (pre-emptive rate limiting)
     now = time.time()
@@ -496,46 +497,45 @@ def get_alpha_pnl(session: requests.Session, alpha_id: str) -> pd.DataFrame:
                         date=lambda x: pd.to_datetime(x.date, format="%Y-%m-%d")
                     ).set_index("date")
                     
-                    logger.info(f"Retrieved PNL data for alpha {alpha_id}: {len(pnl_df)} records")
+                    # Successfully retrieved PNL data
                     return pnl_df
 
                 except json.JSONDecodeError as je:
-                    logger.error(f"JSON decode error for alpha {alpha_id} (Attempt {attempt}): {je}. Response text: {result.text[:200]}")
-                    # Fall through to retry logic
+                    # JSON decode error - will retry
+                    pass  # Fall through to retry logic
 
             elif result.status_code == 429: # Too Many Requests
-                logger.warning(f"Explicit rate limit (429) for alpha {alpha_id} (Attempt {attempt}).")
-                # Fall through to retry logic with backoff
+                # Rate limited - will retry with backoff
+                pass  # Fall through to retry logic with backoff
             elif 500 <= result.status_code < 600: # Server-side errors
-                logger.warning(f"Server error ({result.status_code}) for alpha {alpha_id} (Attempt {attempt}). Response: {result.text[:200]}")
-                # Fall through to retry logic with backoff
+                # Server error - will retry
+                pass  # Fall through to retry logic with backoff
             else: # Other client errors or unexpected status codes
-                logger.error(f"Failed to fetch PNL for alpha {alpha_id}. Status: {result.status_code}, Response: {result.text[:200]} (Attempt {attempt})")
                 if 400 <= result.status_code < 500 and result.status_code != 429: # Non-retryable client errors
-                    logger.error(f"Client error {result.status_code} for alpha {alpha_id}. Not retrying.")
+                    # Client error - not retryable
+                    if attempt >= max_retries:
+                        logger.error(f"Failed to fetch PNL for alpha {alpha_id}: HTTP {result.status_code}")
                     return pd.DataFrame()
                 # For other errors, fall through to retry logic
 
             # Retry logic for errors not handled by 'Retry-After' or specific status checks above
             # Use exponential backoff with cap
             wait_duration = min(default_retry_seconds * min(attempt, 8), max_backoff_seconds) # Cap at max_backoff_seconds
-            logger.info(f"Retrying PNL fetch for alpha {alpha_id} in {wait_duration}s (Attempt {attempt})...")
             time.sleep(wait_duration)
 
         except requests.exceptions.Timeout:
-            logger.warning(f"Request timed out fetching PNL for alpha {alpha_id} (Attempt {attempt})")
+            # Timeout - retry with backoff
             wait_duration = min(default_retry_seconds * min(attempt, 8), max_backoff_seconds)
-            logger.info(f"Retrying after timeout for alpha {alpha_id} in {wait_duration}s...")
             time.sleep(wait_duration)
         except requests.exceptions.RequestException as re:
-            logger.error(f"Request exception fetching PNL for alpha {alpha_id} (Attempt {attempt}): {re}")
-            # For general request exceptions, use moderate backoff with cap
+            # General request exception - retry with backoff
+            if attempt >= max_retries:
+                logger.error(f"Failed to fetch PNL for alpha {alpha_id} after {max_retries} attempts: {re}")
             wait_duration = min(default_retry_seconds * min(attempt, 8), max_backoff_seconds)
-            logger.info(f"Retrying after request exception for alpha {alpha_id} in {wait_duration}s...")
             time.sleep(wait_duration)
 
 
-def get_alpha_pnl_threaded(session: requests.Session, alpha_ids: List[str], max_workers: int = 200) -> Tuple[pd.DataFrame, List[str]]:
+def get_alpha_pnl_threaded(session: requests.Session, alpha_ids: List[str], max_workers: int = 200, progress_callback=None) -> Tuple[pd.DataFrame, List[str]]:
     """
     Get PNL data for multiple alphas in parallel using a thread pool executor with gradual ramp-up.
 
@@ -543,6 +543,7 @@ def get_alpha_pnl_threaded(session: requests.Session, alpha_ids: List[str], max_
         session: The authenticated requests.Session object.
         alpha_ids: List of alpha IDs to fetch PNL for.
         max_workers: Maximum number of worker threads to use.
+        progress_callback: Optional callback function to report progress
 
     Returns:
         Tuple of (combined_pnl_df, failed_alpha_ids) where:
@@ -573,9 +574,12 @@ def get_alpha_pnl_threaded(session: requests.Session, alpha_ids: List[str], max_
             # Ensure records were fetched successfully
             if not results[alpha_id].empty:
                 record_count = len(results[alpha_id])
-                pass
+                if progress_callback:
+                    progress_callback(1)  # Report progress for this alpha
             else:
                 logger.warning(f"No PNL data returned for alpha {alpha_id} in initial batch")
+                if progress_callback:
+                    progress_callback(1)  # Still count as processed
             # Small delay between initial requests
             time.sleep(0.5)
         except Exception as exc:
@@ -631,9 +635,12 @@ def get_alpha_pnl_threaded(session: requests.Session, alpha_ids: List[str], max_
                     # Log success with record count
                     if not pnl_df.empty:
                         record_count = len(pnl_df)
-                        pass
+                        if progress_callback:
+                            progress_callback(1)  # Report progress
                     else:
                         logger.warning(f"No PNL data returned for alpha {alpha_id}")
+                        if progress_callback:
+                            progress_callback(1)  # Still count as processed
                 except Exception as exc:
                     logger.error(f"Unexpected error in thread pool executor: {exc}")
         except KeyboardInterrupt:

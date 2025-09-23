@@ -634,14 +634,26 @@ class ChartService:
         feature_category_labels = []
 
         for feature in feature_names:
-            display_name = feature.replace('_', ' ').title()
+            # First remove the prefix (handle compound prefixes like risk_regime_)
+            clean_name = feature
+            # Handle compound prefix risk_regime_ first
+            if feature.startswith('risk_regime_'):
+                clean_name = feature[len('risk_regime_'):]
+            else:
+                # Then handle single prefixes
+                for prefix in ['risk_', 'metadata_', 'spiked_', 'multiscale_', 'regime_']:
+                    if feature.startswith(prefix):
+                        clean_name = feature[len(prefix):]
+                        break
 
-            # Determine category and shorten name
+            # Then convert to title case
+            display_name = clean_name.replace('_', ' ').title()
+
+            # Determine category
             category = 'other'
             for cat_name, cat_features in feature_categories.items():
                 if feature in cat_features:
                     category = cat_name
-                    display_name = display_name.replace(f'{cat_name.title()} ', '')
                     break
 
             enhanced_display_names.append(display_name)

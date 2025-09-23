@@ -362,10 +362,12 @@ def register_chart_interaction_callbacks(app: dash.Dash):
                     color = "#666"
                     if feat.startswith('spiked_'): color = "#1f77b4"
                     elif feat.startswith('multiscale_'): color = "#2ca02c"
+                    elif feat.startswith('risk_regime_'): color = "#9467bd"  # Handle compound prefix
                     elif feat.startswith('risk_'): color = "#d62728"
                     elif feat.startswith('metadata_'): color = "#ff7f0e"
+                    elif feat.startswith('regime_'): color = "#9467bd"
 
-                    clean_name = feat.replace('spiked_', '').replace('multiscale_', '').replace('risk_', '').replace('metadata_', '')
+                    clean_name = feat.replace('risk_regime_', '').replace('spiked_', '').replace('multiscale_', '').replace('risk_', '').replace('metadata_', '').replace('regime_', '')
                     pc1_items.append(html.Span([
                         html.Span("●", style={"color": color}),
                         f" {clean_name} ({contrib:.2f})"
@@ -383,10 +385,12 @@ def register_chart_interaction_callbacks(app: dash.Dash):
                     color = "#666"
                     if feat.startswith('spiked_'): color = "#1f77b4"
                     elif feat.startswith('multiscale_'): color = "#2ca02c"
+                    elif feat.startswith('risk_regime_'): color = "#9467bd"  # Handle compound prefix
                     elif feat.startswith('risk_'): color = "#d62728"
                     elif feat.startswith('metadata_'): color = "#ff7f0e"
+                    elif feat.startswith('regime_'): color = "#9467bd"
 
-                    clean_name = feat.replace('spiked_', '').replace('multiscale_', '').replace('risk_', '').replace('metadata_', '')
+                    clean_name = feat.replace('risk_regime_', '').replace('spiked_', '').replace('multiscale_', '').replace('risk_', '').replace('metadata_', '').replace('regime_', '')
                     pc2_items.append(html.Span([
                         html.Span("●", style={"color": color}),
                         f" {clean_name} ({contrib:.2f})"

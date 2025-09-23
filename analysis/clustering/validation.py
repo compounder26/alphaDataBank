@@ -113,8 +113,8 @@ class ClusteringValidator:
         n_samples = len(labels)
         
         if n_clusters < 2 or n_samples < 2:
-            logger.warning("Not enough clusters or samples for quality assessment")
-            return {'error': 'insufficient_data'}
+            logger.debug(f"Insufficient data for clustering: {n_clusters} clusters, {n_samples} samples")
+            return {'error': 'insufficient_data', 'n_clusters': n_clusters, 'n_samples': n_samples}
         
         # Silhouette score
         try:
