@@ -12,7 +12,8 @@ from ..components import (
     create_analysis_filters,
     create_info_card,
     create_loading_wrapper,
-    create_tab_selector
+    create_tab_selector,
+    create_dataset_statistics_panel
 )
 
 # Import content creation functions from their actual modules
@@ -42,6 +43,9 @@ def create_analysis_tab_content() -> dbc.Row:
                     loading_id="loading-analysis-summary"
                 )
             ),
+
+            # Dataset Statistics panel - always visible
+            html.Div(id='dataset-statistics-panel', children=[], className="mt-3"),
 
             # Conditional treemap information panels (only shown in treemap view)
             html.Div(id='treemap-sidebar-info', children=[], className="mt-3")

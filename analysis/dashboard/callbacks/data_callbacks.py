@@ -210,6 +210,24 @@ def register_data_loading_callbacks(app: dash.Dash):
         except Exception as e:
             return {}, f"Error loading analysis: {str(e)}"
 
+    @callback_wrapper.safe_callback(
+        Output('dataset-statistics-panel', 'children'),
+        [Input('analysis-data', 'data'),
+         Input('analysis-subtabs', 'value')],
+        prevent_initial_call=False
+    )
+    @preserve_prevent_update_logic
+    def update_dataset_statistics_panel(analysis_data, active_subtab):
+        """
+        Update the dataset statistics panel that appears below Analysis Summary.
+        Shows for all datafields views (including treemap, since we removed it from treemap-sidebar-info).
+        """
+        # Only show dataset statistics when in datafields subtab
+        if active_subtab == 'datafields-subtab' and analysis_data:
+            from ..components import create_dataset_statistics_panel
+            return create_dataset_statistics_panel(analysis_data)
+        return []
+
 
 def register_clustering_region_callbacks(app: dash.Dash):
     """

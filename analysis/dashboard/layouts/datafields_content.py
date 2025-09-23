@@ -328,48 +328,7 @@ def get_dataset_treemap_sidebar_info(analysis_data):
     if 'error' in dataset_info or not dataset_info['dataset_stats']:
         return []
 
-    # Create statistics panel
-    stats_panel = dbc.Card([
-        dbc.CardHeader("📊 Dataset Statistics"),
-        dbc.CardBody([
-            dbc.ListGroup([
-                dbc.ListGroupItem([
-                    html.Strong("Total Datasets: "),
-                    html.Span(f"{dataset_info['total_datasets']}", className="badge bg-primary ms-2")
-                ]),
-                dbc.ListGroupItem([
-                    html.Strong("Datasets with Alpha Usage: "),
-                    html.Span(f"{dataset_info['used_datasets']}", className="badge bg-success ms-2")
-                ]),
-                dbc.ListGroupItem([
-                    html.Strong("Unused Datasets: "),
-                    html.Span(f"{dataset_info['unused_datasets']}", className="badge bg-secondary ms-2")
-                ]),
-                dbc.ListGroupItem([
-                    html.Strong("Usage Rate: "),
-                    html.Span(
-                        f"{(dataset_info['used_datasets'] / dataset_info['total_datasets'] * 100):.1f}%" if dataset_info['total_datasets'] > 0 else "0%",
-                        className="badge bg-info ms-2"
-                    )
-                ])
-            ], flush=True, className="mb-3"),
-
-            html.Hr(),
-            html.H6("🎯 Top Used Datasets"),
-            dbc.ListGroup([
-                dbc.ListGroupItem([
-                    html.Strong(f"{stat['dataset_id']}: "),
-                    html.Span(f"{stat['alpha_usage_count']} alphas", className="me-2"),
-                    html.Span(
-                        f"({stat['used_datafields']}/{stat['total_datafields']} fields)",
-                        className="text-muted small"
-                    )
-                ]) for stat in [d for d in dataset_info['dataset_stats'] if d['is_used']][:10]
-            ], flush=True) if any(d['is_used'] for d in dataset_info['dataset_stats']) else html.Div("No used datasets found", className="text-muted")
-        ])
-    ], className="mb-3")
-
-    # Create legend panel
+    # Create legend panel only (statistics are now in the main sidebar)
     legend_panel = dbc.Card([
         dbc.CardHeader("🎨 Legend"),
         dbc.CardBody([
@@ -404,7 +363,7 @@ def get_dataset_treemap_sidebar_info(analysis_data):
         ])
     ])
 
-    return [stats_panel, legend_panel]
+    return [legend_panel]
 
 
 def create_dataset_treemap_content(analysis_data):

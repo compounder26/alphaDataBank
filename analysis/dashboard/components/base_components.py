@@ -665,3 +665,112 @@ def create_action_button(text: str, button_id: Any, color: str = "primary",
         className=className,
         n_clicks=0
     )
+
+
+def create_dataset_statistics_panel(analysis_data: Dict[str, Any],
+                                   show_top_datasets: bool = True,
+                                   max_top_datasets: int = 10,
+                                   className: str = "mb-3") -> dbc.Card:
+    """
+    Create reusable dataset statistics panel for datafields views.
+
+    Args:
+        analysis_data: Analysis data containing datafields and metadata
+        show_top_datasets: Whether to show top used datasets list
+        max_top_datasets: Maximum number of top datasets to show
+        className: CSS classes for the card
+
+    Returns:
+        Bootstrap Card component with dataset statistics
+    """
+    # Import services
+    from ..services import get_analysis_service
+
+    try:
+        analysis_service = get_analysis_service()
+
+        # Extract filter information from analysis_data metadata
+        metadata = analysis_data.get('metadata', {})
+        filters = metadata.get('filters', {})
+
+        # Calculate dataset statistics
+        dataset_info = analysis_service.calculate_dataset_statistics(
+            analysis_data,
+            filters.get('region'),
+            filters.get('universe'),
+            filters.get('delay'),
+            filters.get('date_from'),
+            filters.get('date_to')
+        )
+
+        if 'error' in dataset_info:
+            return create_alert_message(
+                f"Error loading dataset statistics: {dataset_info['error']}",
+                alert_type="danger"
+            )
+
+        # Create statistics list
+        stats = [
+            {
+                'label': 'Total Datasets',
+                'value': dataset_info['total_datasets'],
+                'badge_color': 'primary'
+            },
+            {
+                'label': 'Datasets with Alpha Usage',
+                'value': dataset_info['used_datasets'],
+                'badge_color': 'success'
+            },
+            {
+                'label': 'Unused Datasets',
+                'value': dataset_info['unused_datasets'],
+                'badge_color': 'secondary'
+            },
+            {
+                'label': 'Usage Rate',
+                'value': f"{(dataset_info['used_datasets'] / dataset_info['total_datasets'] * 100):.1f}%"
+                        if dataset_info['total_datasets'] > 0 else "0%",
+                'badge_color': 'info'
+            }
+        ]
+
+        # Create the main statistics card content
+        content_items = [
+            dbc.ListGroup([
+                dbc.ListGroupItem([
+                    html.Strong(f"{stat['label']}: "),
+                    html.Span(str(stat['value']), className=f"badge bg-{stat['badge_color']} ms-2")
+                ]) for stat in stats
+            ], flush=True)
+        ]
+
+        # Add top used datasets if requested
+        if show_top_datasets and dataset_info.get('dataset_stats'):
+            used_datasets = [d for d in dataset_info['dataset_stats'] if d['is_used']]
+            if used_datasets:
+                content_items.extend([
+                    html.Hr(),
+                    html.H6("🎯 Top Used Datasets"),
+                    dbc.ListGroup([
+                        dbc.ListGroupItem([
+                            html.Strong(f"{stat['dataset_id']}: "),
+                            html.Span(f"{stat['alpha_usage_count']} alphas", className="me-2"),
+                            html.Span(
+                                f"({stat['used_datafields']}/{stat['total_datafields']} fields)",
+                                className="text-muted small"
+                            )
+                        ]) for stat in used_datasets[:max_top_datasets]
+                    ], flush=True)
+                ])
+
+        return dbc.Card([
+            dbc.CardHeader("📊 Dataset Statistics"),
+            dbc.CardBody(content_items)
+        ], className=className)
+
+    except Exception as e:
+        print(f"Error creating dataset statistics panel: {e}")
+        return create_alert_message(
+            "Error creating dataset statistics",
+            alert_type="warning"
+        )

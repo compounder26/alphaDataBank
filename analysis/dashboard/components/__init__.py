@@ -28,7 +28,8 @@ from .base_components import (
     create_legend_component,
     create_section_header,
     create_empty_state_message,
-    create_action_button
+    create_action_button,
+    create_dataset_statistics_panel
 )
 
 from .filters import (
@@ -124,6 +125,7 @@ __all__ = [
     'create_section_header',
     'create_empty_state_message',
     'create_action_button',
+    'create_dataset_statistics_panel',
 
     # Filter components
     'create_analysis_filters',
