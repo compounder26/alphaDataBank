@@ -42,6 +42,10 @@ Fetch unsubmitted alphas to your local database and calculate self-correlations 
 Example:
 - For quickly filtering super alphas by self correlation to find submission-worthy candidates.
 
+![Super Alpha Query Example](img/super_alpha_query.png)
+
+The query filters by `code IS NULL` to identify super alphas (unsubmitted alpha types are not stored locally).
+
 ## Setup
 
 ### 1. Install Requirements
