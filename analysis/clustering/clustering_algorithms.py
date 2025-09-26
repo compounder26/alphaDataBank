@@ -1938,7 +1938,6 @@ def generate_clustering_data(region: str,
             # Apply dimensionality reduction
             for method in ['tsne', 'umap', 'pca']:
                 try:
-                    print(f"Applying {method.upper()} with enhanced features...")
 
                     # Get both 2D coordinates and clustering features
                     coords_2d, coords_clustering, info = apply_dimensionality_reduction(
@@ -2000,7 +1999,6 @@ def generate_clustering_data(region: str,
                 # For clustering: use thresholded matrix
                 # For visualization/MDS: use raw matrix
                 if enable_advanced_methods:
-                    print("Applying correlation regularization...")
                     shrunk_corr_thresholded = apply_correlation_regularization(corr_matrix_thresholded)
                     shrunk_corr_raw = apply_correlation_regularization(corr_matrix_raw)
                     results['shrinkage_applied'] = True
@@ -2085,7 +2083,6 @@ def generate_clustering_data(region: str,
 
         # Apply validation if requested
         if apply_validation and validate_clustering_pipeline is not None:
-            print("Applying clustering validation...")
             # Extract required arguments for validation
             if 'feature_matrix' in results and 'cluster_labels' in results:
                 features_df = pd.DataFrame.from_dict(results['feature_matrix'], orient='index')

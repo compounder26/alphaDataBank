@@ -201,13 +201,11 @@ def register_modal_callbacks(app: dash.Dash):
             raise PreventUpdate
 
         trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
-        print(f"DEBUG: All datafields chart callback triggered by: {trigger_id}")
 
         if trigger_id == "detail-modal-close":
             return False, "", ""
 
         if trigger_id == "all-datafields-chart" and all_datafields_click:
-            print(f"DEBUG: Processing all-datafields-chart click")
             try:
                 datafield = all_datafields_click['points'][0]['y']
                 count = all_datafields_click['points'][0]['x']
@@ -329,14 +327,12 @@ def register_modal_callbacks(app: dash.Dash):
             raise PreventUpdate
 
         trigger_id = ctx.triggered[0]["prop_id"].split(".")[0]
-        print(f"DEBUG: Neutralization callback triggered by: {trigger_id}")
 
         if trigger_id == "detail-modal-close":
             return False, "", ""
 
         # Check which chart was clicked
         if trigger_id == "neutralization-pie-chart" and pie_click:
-            print(f"DEBUG: Processing neutralization-pie-chart click")
             try:
                 neutralization = pie_click['points'][0]['label']
                 count = pie_click['points'][0]['value']
@@ -356,7 +352,6 @@ def register_modal_callbacks(app: dash.Dash):
                 return True, "Error", create_error_modal_content(f"Error processing neutralization click: {str(e)}")
 
         elif trigger_id == "neutralization-bar-chart" and bar_click:
-            print(f"DEBUG: Processing neutralization-bar-chart click")
             try:
                 neutralization = bar_click['points'][0]['y']
                 count = bar_click['points'][0]['x']

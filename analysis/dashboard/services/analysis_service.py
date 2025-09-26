@@ -134,7 +134,6 @@ class AnalysisService:
 
             # If filters are provided, get fresh filtered data instead of using cached analysis_data
             if any([region, universe, delay, date_from, date_to]):
-                print(f"Applying filters to dataset statistics: region={region}, universe={universe}, delay={delay}")
                 filtered_results = analysis_ops.get_analysis_summary(region, universe, delay, date_from, date_to)
                 datafields_data = filtered_results.get('datafields', {})
             else:
@@ -170,7 +169,6 @@ class AnalysisService:
             # Calculate total datafields per dataset, respecting region filter
             if region:
                 # Get region-specific datafields directly from database
-                print(f"Querying database for datafields available in region: {region}")
                 try:
                     db_engine = analysis_ops._get_db_engine()
                     with db_engine.connect() as connection:
@@ -190,8 +188,6 @@ class AnalysisService:
                             if dataset_id:
                                 dataset_total_datafields[dataset_id] = dataset_total_datafields.get(dataset_id, 0) + 1
 
-                        print(f"Region {region}: Found {len(dataset_total_datafields)} datasets with datafields")
-                        print(f"Top 10 datasets by datafield count: {sorted(dataset_total_datafields.items(), key=lambda x: x[1], reverse=True)[:10]}")
 
                 except Exception as e:
                     print(f"Error querying region-specific datafields: {e}")
@@ -208,7 +204,6 @@ class AnalysisService:
                     dataset_id = info.get('dataset_id')
                     if dataset_id:
                         dataset_total_datafields[dataset_id] = dataset_total_datafields.get(dataset_id, 0) + 1
-                print(f"No filter: Found {len(dataset_total_datafields)} total datasets")
 
             # Create comprehensive dataset statistics
             dataset_stats = []
@@ -218,11 +213,9 @@ class AnalysisService:
             if any([region, universe, delay, date_from, date_to]):
                 # Filter mode: Show all datasets with datafields available in the filtered region
                 all_datasets = set(dataset_total_datafields.keys())
-                print(f"Filter mode: Found {len(all_datasets)} datasets with datafields available in region {region}")
             else:
                 # No filter: Show all datasets (both used and available)
                 all_datasets = set(dataset_total_datafields.keys()) | set(dataset_alpha_usage.keys())
-                print(f"No filter mode: Found {len(all_datasets)} total datasets")
 
             for dataset_id in all_datasets:
                 total_datafields = dataset_total_datafields.get(dataset_id, 0)
@@ -240,8 +233,6 @@ class AnalysisService:
                         'usage_percentage': usage_percentage,
                         'is_used': alpha_usage_count > 0
                     })
-
-            print(f"Final dataset_stats count: {len(dataset_stats)} (used: {len([d for d in dataset_stats if d['is_used']])}, unused: {len([d for d in dataset_stats if not d['is_used']])}")
 
             # Sort by total datafields (size)
             dataset_stats.sort(key=lambda x: x['total_datafields'], reverse=True)

@@ -120,7 +120,6 @@ def create_all_datasets_content(analysis_data):
                 dataset_counts[dataset_id] += len(alphas)
 
         datasets_list = list(sorted(dataset_counts.items(), key=lambda x: x[1], reverse=True))
-        print(f"Found {len(datasets_list)} datasets: {[name for name, _ in datasets_list[:10]]}...")
     except Exception as e:
         print(f"Error processing datasets: {e}")
         return html.Div("Error processing dataset data", className="text-danger text-center p-4")
