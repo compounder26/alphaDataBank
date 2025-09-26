@@ -8,14 +8,14 @@ Extract these LAST - they are the most complex and risky.
 """
 
 import dash
-from dash import Input, Output, State, callback, callback_context, MATCH, ALL
+from dash import Input, Output, State, callback, callback_context, MATCH, ALL, html
 from dash.exceptions import PreventUpdate
+import dash_bootstrap_components as dbc
 import logging
 
 from .base_callbacks import CallbackWrapper, preserve_prevent_update_logic
 
 logger = logging.getLogger(__name__)
-
 
 def register_pattern_matching_callbacks(app: dash.Dash):
     """
@@ -38,7 +38,6 @@ def register_pattern_matching_callbacks(app: dash.Dash):
         """
         Handle "Show all alphas" button clicks for operators.
 
-        EXACT COPY from visualization_server.py lines 2354-2392
         Preserves pattern-matching logic and component ID structure.
         """
         if not n_clicks or not analysis_data:
@@ -93,7 +92,6 @@ def register_pattern_matching_callbacks(app: dash.Dash):
         """
         Handle "Show less" button clicks for operators.
 
-        EXACT COPY from visualization_server.py lines 2394-2431
         Preserves exact logic and styling.
         """
         if not n_clicks or not analysis_data:
@@ -150,7 +148,6 @@ def register_pattern_matching_callbacks(app: dash.Dash):
         """
         Handle "Show all alphas" button clicks for datafields.
 
-        EXACT COPY from visualization_server.py lines 2433-2471
         """
         if not n_clicks or not analysis_data:
             raise PreventUpdate
@@ -204,9 +201,7 @@ def register_pattern_matching_callbacks(app: dash.Dash):
     def handle_datafield_alpha_modal(n_clicks_list, recommendations_content):
         """
         Handle datafield alpha viewing modal.
-
-        EXACT COPY from visualization_server.py lines 4654-4722
-        Preserves ALL pattern-matching logic.
+        Shows alphas grouped by region that use the selected datafield.
         """
         if not any(n_clicks_list) or not callback_context.triggered:
             raise PreventUpdate
@@ -214,12 +209,159 @@ def register_pattern_matching_callbacks(app: dash.Dash):
         # Get the triggered component
         triggered_id = callback_context.triggered[0]['prop_id']
 
-        # Extract datafield index from triggered component
-        # ... (preserve exact parsing logic from original)
+        # Parse the datafield ID from the triggered component
+        import json
+        triggered_info = json.loads(triggered_id.split('.')[0].replace("'", '"'))
+        datafield_id = triggered_info['index']
 
-        # Return modal content (preserve exact format)
-        return True, "Datafield Alpha Details", "Modal content here"
+        try:
+            # Get recommendation and analysis services
+            from ..services import get_recommendation_service, get_analysis_service
+            from ..components import create_alpha_badge
 
+            rec_service = get_recommendation_service()
+            analysis_service = get_analysis_service()
+
+            # Get full recommendations data to find regions where this datafield is used
+            recommendations_data = rec_service.get_datafield_recommendations()
+            recommendations = recommendations_data.get('recommendations', [])
+
+            # Find the recommendation for this specific datafield
+            datafield_rec = None
+            for rec in recommendations:
+                if rec['datafield_id'] == datafield_id:
+                    datafield_rec = rec
+                    break
+
+            if not datafield_rec:
+                return True, f"Datafield: {datafield_id}", html.Div(
+                    "No usage data found for this datafield.",
+                    className="text-muted text-center p-4"
+                )
+
+            # Build modal content showing alphas by region
+            modal_content = []
+
+            # Add header with datafield info
+            modal_content.append(
+                dbc.Card([
+                    dbc.CardBody([
+                        html.H5("Datafield Information", className="mb-3"),
+                        dbc.ListGroup([
+                            dbc.ListGroupItem([
+                                html.Strong("Datafield ID: "),
+                                html.Code(datafield_id, className="bg-light p-1")
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Strong("Description: "),
+                                html.Span(datafield_rec.get('description', 'No description'))
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Strong("Data Type: "),
+                                html.Span(
+                                    datafield_rec.get('data_type', 'Unknown'),
+                                    className="badge bg-info ms-2"
+                                )
+                            ]),
+                            dbc.ListGroupItem([
+                                html.Strong("Total Alphas Using This: "),
+                                html.Span(
+                                    str(datafield_rec.get('alpha_count', 0)),
+                                    className="badge bg-primary ms-2"
+                                )
+                            ])
+                        ], flush=True)
+                    ])
+                ], className="mb-4")
+            )
+
+            # Add alphas grouped by region
+            modal_content.append(
+                html.H5("Alphas Using This Datafield (by Region)", className="mb-3")
+            )
+
+            # Get usage details from the recommendation
+            usage_details = datafield_rec.get('usage_details', {})
+            used_regions = datafield_rec.get('used_in_regions', [])
+
+            if used_regions:
+                accordion_items = []
+
+                for region in sorted(used_regions):
+                    # Get alphas for this datafield in this region
+                    alphas_in_region = rec_service.get_alphas_by_datafield_and_region(
+                        datafield_id, region
+                    )
+
+                    region_count = usage_details.get(region, len(alphas_in_region))
+
+                    # Create accordion item for this region
+                    accordion_item = dbc.AccordionItem(
+                        [
+                            html.Div([
+                                html.P(
+                                    f"Total alphas in {region}: {region_count}",
+                                    className="text-muted mb-3"
+                                ),
+                                html.Div(
+                                    [
+                                        create_alpha_badge(
+                                            alpha_id=alpha_id,
+                                            href=f"https://platform.worldquantbrain.com/alpha/{alpha_id}",
+                                            color="success"
+                                        ) for alpha_id in alphas_in_region[:100]  # Limit to 100
+                                    ],
+                                    style={'max-height': '300px', 'overflow-y': 'auto'}
+                                ),
+                                html.Small(
+                                    f"Showing first 100 of {len(alphas_in_region)} alphas",
+                                    className="text-muted mt-2"
+                                ) if len(alphas_in_region) > 100 else None
+                            ])
+                        ],
+                        title=f"{region} Region ({region_count} alphas)",
+                        item_id=f"region-{region}"
+                    )
+                    accordion_items.append(accordion_item)
+
+                modal_content.append(
+                    dbc.Accordion(
+                        accordion_items,
+                        id="regions-accordion",
+                        active_item=f"region-{sorted(used_regions)[0]}" if used_regions else None,
+                        flush=True
+                    )
+                )
+            else:
+                modal_content.append(
+                    dbc.Alert(
+                        "No alpha usage data found for this datafield.",
+                        color="warning"
+                    )
+                )
+
+            # Add recommendations footer if there are recommended regions
+            recommended_regions = datafield_rec.get('recommended_regions', [])
+            if recommended_regions:
+                modal_content.append(html.Hr(className="my-4"))
+                modal_content.append(
+                    dbc.Alert([
+                        html.Strong("Expansion Opportunities: "),
+                        f"This datafield could be used in {len(recommended_regions)} additional regions: ",
+                        html.Span(
+                            ", ".join(recommended_regions),
+                            className="fw-bold"
+                        )
+                    ], color="info")
+                )
+
+            return True, f"Datafield Usage: {datafield_id}", html.Div(modal_content)
+
+        except Exception as e:
+            import traceback
+            error_msg = f"Error loading datafield alphas: {str(e)}\n{traceback.format_exc()}"
+            print(error_msg)
+            return True, "Error", dbc.Alert(error_msg, color="danger")
 
 def get_pattern_matching_safety_checklist() -> list[str]:
     """
@@ -238,7 +380,6 @@ def get_pattern_matching_safety_checklist() -> list[str]:
         "✓ Test edge cases (empty data, no matches, etc.)"
     ]
 
-
 def validate_pattern_matching_extraction() -> bool:
     """
     Validate that pattern-matching callbacks were extracted correctly.
@@ -248,7 +389,6 @@ def validate_pattern_matching_extraction() -> bool:
     # This would contain actual validation logic
     # Testing each MATCH, ALL pattern works correctly
     return True
-
 
 # CRITICAL: Pattern-matching callback guidelines
 PATTERN_MATCHING_GUIDELINES = """
@@ -289,8 +429,7 @@ EXTRACTION ORDER (CRITICAL):
 
 ROLLBACK PLAN:
 If any pattern-matching callback breaks:
-1. Immediately restore original callback in visualization_server.py
-2. Comment out extracted version
-3. Debug in isolated test environment
-4. Re-extract only after fixing all issues
+1. Check the callback registration and ID patterns
+2. Debug in isolated test environment
+3. Fix issues before deployment
 """

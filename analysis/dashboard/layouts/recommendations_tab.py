@@ -2,7 +2,6 @@
 Recommendations Tab Layout
 
 Layout structure for the datafield recommendations and cross-analysis tab.
-Extracted from visualization_server.py with preserved functionality.
 """
 
 from dash import html, dcc
@@ -15,7 +14,6 @@ from ..components import (
     create_alpha_summary_card,
     create_recommendations_table
 )
-
 
 def create_recommendations_tab_content() -> dbc.Row:
     """
@@ -42,7 +40,6 @@ def create_recommendations_tab_content() -> dbc.Row:
             )
         ])
     ])
-
 
 def create_recommendations_summary_card(summary_stats):
     """
@@ -73,7 +70,6 @@ def create_recommendations_summary_card(summary_stats):
         ])
     ], className="mb-4")
 
-
 def create_recommendations_display(recommendations, summary_stats):
     """
     Create complete recommendations display.
@@ -101,7 +97,6 @@ def create_recommendations_display(recommendations, summary_stats):
         create_recommendations_table(recommendations)
     ])
 
-
 def create_recommendation_error_display(error_message):
     """
     Create error display for recommendations.
@@ -114,7 +109,6 @@ def create_recommendation_error_display(error_message):
     """
     return dbc.Alert(f"Error loading recommendations: {error_message}", color="danger")
 
-
 def create_no_recommendations_message():
     """
     Create message when no recommendations are available.
@@ -126,7 +120,6 @@ def create_no_recommendations_message():
         "No datafield recommendations found matching the current filters. Try adjusting the filters or analyzing more alphas.",
         color="info"
     )
-
 
 def create_neutralization_content(neutralization_data):
     """

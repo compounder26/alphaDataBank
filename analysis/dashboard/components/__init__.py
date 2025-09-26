@@ -2,7 +2,7 @@
 Components Package
 
 Reusable UI components for the Alpha Dashboard.
-Provides modular, testable components extracted from the original monolithic file.
+Provides modular, testable components for the dashboard.
 """
 
 from .base_components import (

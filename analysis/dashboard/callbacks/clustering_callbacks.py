@@ -2,7 +2,6 @@
 Clustering Callbacks
 
 Clustering visualization and coordinate update callbacks.
-Extracted from visualization_server.py lines 724-855 with exact logic preservation.
 """
 
 import dash
@@ -14,13 +13,11 @@ import pandas as pd
 from .base_callbacks import CallbackWrapper, preserve_prevent_update_logic
 from ..services import get_clustering_service
 
-
 def register_clustering_callbacks(app: dash.Dash):
     """
     Register clustering-related callbacks.
 
     CRITICAL: These callbacks handle region selection, coordinate updates, and method switching.
-    Maintains exact compatibility with original visualization_server.py.
 
     Args:
         app: Dash application instance
@@ -54,7 +51,6 @@ def register_clustering_callbacks(app: dash.Dash):
         """
         Update clustering data when region is selected.
 
-        EXACT COPY from visualization_server.py lines 725-797
         Preserves all data transformation logic and coordinate handling.
         """
         if not selected_region or not all_region_data or selected_region not in all_region_data:
@@ -122,7 +118,6 @@ def register_clustering_callbacks(app: dash.Dash):
         """
         Update MDS data based on selected distance metric.
 
-        EXACT COPY from visualization_server.py lines 835-855
         Preserves all distance metric selection logic.
         """
         if not distance_metric:
@@ -135,7 +130,6 @@ def register_clustering_callbacks(app: dash.Dash):
             return mds_angular
         else:  # euclidean is default
             return mds_euclidean
-
 
 def register_clustering_ui_callbacks(app: dash.Dash):
     """
@@ -156,7 +150,6 @@ def register_clustering_ui_callbacks(app: dash.Dash):
         """
         Show distance metric selector only for MDS visualization.
 
-        EXACT COPY from visualization_server.py lines 809-820
         """
         # Check if advanced clustering is available (from config)
         try:
@@ -180,13 +173,11 @@ def register_clustering_ui_callbacks(app: dash.Dash):
         """
         Show PCA loadings heatmap only when PCA method is selected.
 
-        EXACT COPY from visualization_server.py lines 822-833
         """
         if method == 'pca':
             return {'display': 'block'}
         else:
             return {'display': 'none'}
-
 
 # Export for easy registration
 __all__ = ['register_clustering_callbacks', 'register_clustering_ui_callbacks']

@@ -2,8 +2,7 @@
 Platform data utilities for WorldQuant Brain API integration.
 
 This module provides utilities for fetching and managing operators and datafields
-from the WorldQuant Brain API. Extracted from run_analysis_dashboard.py to improve
-code organization and reusability.
+from the WorldQuant Brain API.
 """
 import os
 import logging

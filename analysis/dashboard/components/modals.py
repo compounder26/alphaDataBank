@@ -2,7 +2,6 @@
 Modal Components
 
 Reusable modal components for detailed views and interactions.
-Extracted from visualization_server.py with preserved functionality.
 """
 
 from typing import List, Dict, Any, Optional, Tuple
@@ -11,7 +10,6 @@ import dash_bootstrap_components as dbc
 
 from .base_components import create_alpha_badge, create_action_button
 from .tables import create_alpha_table
-
 
 def create_main_detail_modal() -> dbc.Modal:
     """
@@ -42,7 +40,6 @@ def create_main_detail_modal() -> dbc.Modal:
         ])
     ], id="detail-modal", is_open=False, size="lg")
 
-
 def create_datafield_detail_modal() -> dbc.Modal:
     """
     Create datafield detail modal for recommendations.
@@ -62,7 +59,6 @@ def create_datafield_detail_modal() -> dbc.Modal:
             )
         ])
     ], id="datafield-detail-modal", size="lg", is_open=False)
-
 
 def create_operator_modal_content(operator: str, count: int, chart_type: str,
                                 alphas_using: List[str]) -> List[Any]:
@@ -121,7 +117,6 @@ def create_operator_modal_content(operator: str, count: int, chart_type: str,
         )
 
     return content
-
 
 def create_datafield_modal_content(datafield: str, count: int, chart_type: str,
                                  alphas_using: List[str], dataset_id: str = "Unknown",
@@ -191,7 +186,6 @@ def create_datafield_modal_content(datafield: str, count: int, chart_type: str,
         )
 
     return content
-
 
 def create_dataset_modal_content(dataset: str, count: int,
                                dataset_datafields: List[Tuple[str, int]],
@@ -269,7 +263,6 @@ def create_dataset_modal_content(dataset: str, count: int,
 
     return content
 
-
 def create_alpha_details_modal_content(alpha_id: str, alpha_info: Dict[str, Any],
                                      wq_url: str) -> List[Any]:
     """
@@ -343,7 +336,6 @@ def create_alpha_details_modal_content(alpha_id: str, alpha_info: Dict[str, Any]
             )
         ])
     ]
-
 
 def create_dual_alpha_modal_content(alpha_x: str, alpha_y: str, correlation: float,
                                   alpha_x_info: Dict[str, Any],
@@ -425,7 +417,6 @@ def create_dual_alpha_modal_content(alpha_x: str, alpha_y: str, correlation: flo
         ])
     ]
 
-
 def create_category_modal_content(category: str, count: int,
                                 category_datafields: List[Tuple[str, int]],
                                 total_alphas: set) -> List[Any]:
@@ -501,7 +492,6 @@ def create_category_modal_content(category: str, count: int,
         )
 
     return content
-
 
 def create_neutralization_modal_content(neutralization: str, count: int,
                                        matching_alphas: List[Dict[str, Any]]) -> List[Any]:
@@ -600,7 +590,6 @@ def create_neutralization_modal_content(neutralization: str, count: int,
         )
 
     return content
-
 
 def create_error_modal_content(error_message: str) -> List[Any]:
     """

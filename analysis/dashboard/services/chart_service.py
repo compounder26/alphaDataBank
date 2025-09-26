@@ -2,7 +2,6 @@
 Chart Service
 
 Chart data preparation and Plotly chart creation for the dashboard.
-Extracted from visualization_server.py with full backward compatibility.
 """
 
 import pandas as pd
@@ -20,7 +19,6 @@ from ..utils import (
     create_correlation_heatmap
 )
 from ..config import TEMPLATE, COLOR_SCHEMES, CHART_DIMENSIONS
-
 
 class ChartService:
     """Service for creating and managing dashboard charts."""
@@ -744,10 +742,8 @@ class ChartService:
             shapes=shapes
         )
 
-
 # Global service instance
 _chart_service_instance = None
-
 
 def get_chart_service() -> ChartService:
     """Get singleton chart service instance."""
@@ -755,7 +751,6 @@ def get_chart_service() -> ChartService:
     if _chart_service_instance is None:
         _chart_service_instance = ChartService()
     return _chart_service_instance
-
 
 def reset_chart_service():
     """Reset chart service instance (for testing)."""

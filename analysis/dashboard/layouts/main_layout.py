@@ -2,7 +2,6 @@
 Main Dashboard Layout
 
 Main dashboard structure with tabs, stores, and modal components.
-Extracted from visualization_server.py with preserved functionality.
 """
 
 from typing import List, Dict, Any
@@ -16,7 +15,6 @@ from ..components import (
     create_datafield_detail_modal,
     create_tab_selector
 )
-
 
 def create_main_layout(available_regions: List[str] = None,
                       all_region_data: Dict[str, Any] = None,
@@ -70,7 +68,6 @@ def create_main_layout(available_regions: List[str] = None,
         create_datafield_detail_modal(),
 
     ], fluid=True)
-
 
 def create_data_stores(available_regions: List[str],
                       all_region_data: Dict[str, Any],
@@ -137,7 +134,6 @@ def create_data_stores(available_regions: List[str],
         dcc.Store(id='available-datafields', data=[])
     ]
 
-
 def create_empty_tab_content() -> html.Div:
     """
     Create empty tab content placeholder.
@@ -146,7 +142,6 @@ def create_empty_tab_content() -> html.Div:
         Empty content div
     """
     return html.Div("Select a tab to begin analysis", className="text-center text-muted p-5")
-
 
 def create_unavailable_analysis_content() -> dbc.Alert:
     """
@@ -164,7 +159,6 @@ def create_unavailable_analysis_content() -> dbc.Alert:
             html.Li("Analysis schema is initialized")
         ])
     ], color="warning")
-
 
 def get_tab_content_id_mapping() -> Dict[str, str]:
     """

@@ -2,8 +2,7 @@
 Clustering utilities for alpha data analysis.
 
 This module provides utilities for generating and managing clustering data
-across different regions. Extracted from run_analysis_dashboard.py to improve
-code organization and reusability.
+across different regions.
 """
 import os
 import glob

@@ -2,7 +2,6 @@
 Highlighting Callbacks
 
 Alpha highlighting system callbacks with preserved functionality.
-Extracted from visualization_server.py lines 856-943 with exact logic preservation.
 """
 
 import dash
@@ -13,13 +12,11 @@ from dash.exceptions import PreventUpdate
 from .base_callbacks import CallbackWrapper, preserve_prevent_update_logic
 from ..services import get_analysis_service
 
-
 def register_highlighting_callbacks(app: dash.Dash):
     """
     Register alpha highlighting callbacks.
 
     CRITICAL: These callbacks handle the highlighting system for operators and datafields.
-    Maintains exact compatibility with original visualization_server.py.
 
     Args:
         app: Dash application instance
@@ -39,7 +36,6 @@ def register_highlighting_callbacks(app: dash.Dash):
         """
         Update available operators and datafields for highlighting based on selected region.
 
-        EXACT COPY from visualization_server.py lines 857-886
         Preserves all logic for populating highlight dropdowns.
         """
         if not selected_region:
@@ -74,7 +70,6 @@ def register_highlighting_callbacks(app: dash.Dash):
         """
         Update list of alphas highlighted by operator selection.
 
-        EXACT COPY from visualization_server.py lines 888-910
         Preserves all logic for finding alphas with selected operators.
         """
         if not selected_operators or not region:
@@ -103,7 +98,6 @@ def register_highlighting_callbacks(app: dash.Dash):
         """
         Update list of alphas highlighted by datafield selection.
 
-        EXACT COPY from visualization_server.py lines 911-932
         Preserves all logic for finding alphas with selected datafields.
         """
         if not selected_datafields or not region:
@@ -132,13 +126,11 @@ def register_highlighting_callbacks(app: dash.Dash):
         """
         Clear both operator and datafield highlights.
 
-        EXACT COPY from visualization_server.py lines 934-943
         Preserves all clearing logic.
         """
         if n_clicks:
             return [], []
         return dash.no_update, dash.no_update
-
 
 def register_analysis_subtab_callbacks(app: dash.Dash):
     """
@@ -162,7 +154,6 @@ def register_analysis_subtab_callbacks(app: dash.Dash):
         """
         Render analysis subtab content.
 
-        EXACT COPY from visualization_server.py lines 1035-1055
         Preserves all subtab routing logic.
         """
         if not analysis_data:
@@ -195,7 +186,6 @@ def register_analysis_subtab_callbacks(app: dash.Dash):
         """
         Update operators view mode.
 
-        EXACT COPY from visualization_server.py lines 1091-1096
         """
         return selected_mode
 
@@ -209,7 +199,6 @@ def register_analysis_subtab_callbacks(app: dash.Dash):
         """
         Update datafields view mode.
 
-        EXACT COPY from visualization_server.py lines 1379-1384
         """
         return selected_mode
 
@@ -224,8 +213,6 @@ def register_analysis_subtab_callbacks(app: dash.Dash):
     def update_treemap_sidebar_info(view_mode, active_subtab, analysis_data):
         """
         Conditionally show treemap information in sidebar ONLY in datafields tab.
-
-        UPDATED from visualization_server.py lines 1387-1395 to fix sidebar placement
         """
         # Only show if in datafields subtab AND treemap view mode
         if active_subtab == 'datafields-subtab' and view_mode == 'treemap' and analysis_data:
@@ -233,7 +220,6 @@ def register_analysis_subtab_callbacks(app: dash.Dash):
             from ..layouts.analysis_tab import get_dataset_treemap_sidebar_info
             return get_dataset_treemap_sidebar_info(analysis_data)
         return []
-
 
 # Export for easy registration
 __all__ = ['register_highlighting_callbacks', 'register_analysis_subtab_callbacks']

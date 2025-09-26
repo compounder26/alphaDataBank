@@ -41,7 +41,7 @@ brain_api_url = os.environ.get("BRAIN_API_URL", "https://api.worldquantbrain.com
 brain_url = os.environ.get("BRAIN_URL", "https://platform.worldquantbrain.com")
 
 
-# Legacy Helper Functions and Classes (moved from legacy/helpful_functions.py)
+# Helper Functions and Classes
 class OffsetLimitExceeded(Exception):
     """Raised when API offset limit (10,000) is exceeded."""
     pass

@@ -2,7 +2,7 @@
 Layouts Package
 
 Page and tab layout structures for the Alpha Dashboard.
-Provides organized layout components extracted from the original monolithic file.
+Provides organized layout components for the dashboard.
 """
 
 from .main_layout import (

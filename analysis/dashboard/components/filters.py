@@ -2,7 +2,6 @@
 Filter Components
 
 Reusable filter components for the dashboard.
-Extracted from visualization_server.py with preserved functionality.
 """
 
 from typing import List, Dict, Any, Optional
@@ -10,7 +9,6 @@ from dash import html, dcc
 import dash_bootstrap_components as dbc
 
 from .base_components import create_info_card, create_action_button
-
 
 def create_analysis_filters() -> dbc.Card:
     """
@@ -35,7 +33,6 @@ def create_analysis_filters() -> dbc.Card:
         ]
     )
 
-
 def create_region_filter(element_id: str = 'region-filter',
                         placeholder: str = "All regions",
                         clearable: bool = True) -> html.Div:
@@ -58,7 +55,6 @@ def create_region_filter(element_id: str = 'region-filter',
             clearable=clearable
         )
     ], className="mb-3")
-
 
 def create_universe_filter(element_id: str = 'universe-filter',
                           placeholder: str = "All universes",
@@ -83,7 +79,6 @@ def create_universe_filter(element_id: str = 'universe-filter',
         )
     ], className="mb-3")
 
-
 def create_delay_filter(element_id: str = 'delay-filter',
                        placeholder: str = "All delays",
                        clearable: bool = True) -> html.Div:
@@ -106,7 +101,6 @@ def create_delay_filter(element_id: str = 'delay-filter',
             clearable=clearable
         )
     ], className="mb-3")
-
 
 def create_dates_filter(element_id: str = 'dates-filter',
                        display_format: str = 'MM/DD/YYYY') -> html.Div:
@@ -132,7 +126,6 @@ def create_dates_filter(element_id: str = 'dates-filter',
         )
     ], className="mb-3")
 
-
 def create_clustering_region_selector(element_id: str = 'clustering-region-selector',
                                     placeholder: str = "Select clustering region...") -> html.Div:
     """
@@ -154,7 +147,6 @@ def create_clustering_region_selector(element_id: str = 'clustering-region-selec
         ),
         html.Div(id='clustering-region-info', className="mt-2 small text-muted")
     ])
-
 
 def create_distance_metric_selector(element_id: str = 'distance-metric',
                                    default_value: str = 'euclidean',
@@ -185,7 +177,6 @@ def create_distance_metric_selector(element_id: str = 'distance-metric',
             className="mb-2"
         ),
     ], id=container_id, style={'margin-bottom': '15px'})
-
 
 def create_highlighting_filters() -> dbc.Card:
     """
@@ -229,7 +220,6 @@ def create_highlighting_filters() -> dbc.Card:
         ]
     )
 
-
 def create_display_options_card() -> dbc.Card:
     """
     Create display options card.
@@ -257,7 +247,6 @@ def create_display_options_card() -> dbc.Card:
         ]
     )
 
-
 def create_method_explanation_card() -> dbc.Card:
     """
     Create method explanation card.
@@ -271,7 +260,6 @@ def create_method_explanation_card() -> dbc.Card:
             html.Div(id='method-explanation', className="mb-3")
         ])
     ], className="mb-3")
-
 
 def create_recommendation_filters() -> dbc.Card:
     """
@@ -323,7 +311,6 @@ def create_recommendation_filters() -> dbc.Card:
         ]
     )
 
-
 def create_tab_selector(tabs: List[Dict[str, str]], element_id: str,
                        default_value: str, className: str = 'mb-4') -> dcc.Tabs:
     """
@@ -350,7 +337,6 @@ def create_tab_selector(tabs: List[Dict[str, str]], element_id: str,
         className=className
     )
 
-
 def create_multi_select_dropdown(element_id: str, placeholder: str,
                                 options: List[Dict[str, str]] = None,
                                 searchable: bool = True) -> dcc.Dropdown:
@@ -373,7 +359,6 @@ def create_multi_select_dropdown(element_id: str, placeholder: str,
         searchable=searchable,
         options=options or []
     )
-
 
 def create_single_select_dropdown(element_id: str, placeholder: str,
                                  options: List[Dict[str, str]] = None,
@@ -400,7 +385,6 @@ def create_single_select_dropdown(element_id: str, placeholder: str,
         options=options or []
     )
 
-
 def create_filter_reset_button(button_id: str = "reset-filters-btn") -> dbc.Button:
     """
     Create filter reset button.
@@ -417,7 +401,6 @@ def create_filter_reset_button(button_id: str = "reset-filters-btn") -> dbc.Butt
         color="outline-secondary",
         size="sm"
     )
-
 
 def create_filter_summary(applied_filters: Dict[str, Any]) -> html.Div:
     """

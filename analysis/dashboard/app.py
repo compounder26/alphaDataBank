@@ -28,19 +28,16 @@ from .services import (
 from .layouts import create_main_layout, create_analysis_tab_content, create_clustering_tab_content
 from .callbacks import register_all_callbacks
 
-
 # Global variables for backward compatibility (preserve original globals)
 OPERATORS_FILE = DEFAULT_OPERATORS_FILE
 DYNAMIC_OPERATORS_LIST = None
 _analysis_ops_instance = None
-
 
 def create_visualization_app(data: Optional[Dict[str, Any]] = None,
                            operators_list: Optional[List[str]] = None) -> dash.Dash:
     """
     Create a Dash app for visualizing the clustering data.
 
-    PRESERVES EXACT FUNCTIONALITY from original visualization_server.py create_visualization_app()
     while using the refactored modular architecture.
 
     Args:
@@ -106,13 +103,10 @@ def create_visualization_app(data: Optional[Dict[str, Any]] = None,
 
     return app
 
-
 def create_app() -> dash.Dash:
     """
     Create a Dash app with default settings for production deployment.
     This function is used by wsgi.py for WSGI server deployment.
-
-    PRESERVES EXACT FUNCTIONALITY from original visualization_server.py create_app()
 
     Returns:
         Dash app configured for production
@@ -142,7 +136,6 @@ def create_app() -> dash.Dash:
     app = create_visualization_app(data=None, operators_list=DYNAMIC_OPERATORS_LIST)
     return app
 
-
 def get_app_info() -> Dict[str, Any]:
     """
     Get information about the current app configuration.
@@ -158,7 +151,6 @@ def get_app_info() -> Dict[str, Any]:
         'template': TEMPLATE
     }
 
-
 def reset_app_globals():
     """Reset global app state (useful for testing)."""
     global _analysis_ops_instance, DYNAMIC_OPERATORS_LIST
@@ -166,13 +158,11 @@ def reset_app_globals():
     DYNAMIC_OPERATORS_LIST = None
     reset_analysis_operations()
 
-
 # Preserve original globals for backward compatibility
 def set_operators_file(file_path: str):
     """Set the operators file path."""
     global OPERATORS_FILE
     OPERATORS_FILE = file_path
-
 
 def set_dynamic_operators_list(operators: List[str]):
     """Set the dynamic operators list."""

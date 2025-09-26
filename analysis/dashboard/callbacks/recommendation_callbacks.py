@@ -2,7 +2,6 @@
 Recommendation System Callbacks
 
 Datafield recommendation generation and interaction callbacks.
-Extracted from visualization_server.py lines 4722-5178 with exact logic preservation.
 """
 
 import dash
@@ -18,13 +17,11 @@ from ..layouts.recommendations_tab import (
     create_no_recommendations_message
 )
 
-
 def register_recommendation_callbacks(app: dash.Dash):
     """
     Register recommendation system callbacks.
 
     CRITICAL: These callbacks handle the cross-analysis recommendations feature.
-    Maintains exact compatibility with original visualization_server.py.
 
     Args:
         app: Dash application instance
@@ -44,7 +41,6 @@ def register_recommendation_callbacks(app: dash.Dash):
         """
         Update datafield recommendations based on filters.
 
-        EXACT COPY from visualization_server.py lines 4730-4761
         """
         if not analysis_data:
             return html.Div("Please load analysis data first by applying filters in the Analysis tab.",
@@ -81,7 +77,6 @@ def register_recommendation_callbacks(app: dash.Dash):
         except Exception as e:
             print(f"Error updating recommendations: {e}")
             return create_recommendation_error_display(str(e))
-
 
 # Export for easy registration
 __all__ = ['register_recommendation_callbacks']

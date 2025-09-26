@@ -2,7 +2,6 @@
 Clustering Tab Layout
 
 Layout structure for the clustering visualization tab.
-Extracted from visualization_server.py with preserved functionality.
 """
 
 from dash import html, dcc
@@ -22,7 +21,6 @@ from ..components import (
     create_main_clustering_plot,
     create_pca_loadings_plot
 )
-
 
 def create_clustering_tab_content(advanced_clustering_available: bool = True) -> dbc.Row:
     """
@@ -75,7 +73,6 @@ def create_clustering_tab_content(advanced_clustering_available: bool = True) ->
         ], width=9)
     ])
 
-
 def create_visualization_method_card(advanced_clustering_available: bool = True) -> dbc.Card:
     """
     Create visualization method selection card.
@@ -114,7 +111,6 @@ def create_visualization_method_card(advanced_clustering_available: bool = True)
         className="mb-4"
     )
 
-
 def create_clustering_explanation_text():
     """
     Create clustering explanation text.
@@ -131,7 +127,6 @@ def create_clustering_explanation_text():
             html.Strong("HDBSCAN algorithm"), " automatically determines the optimal number of clusters based on data density."
         ], className="text-muted")
     ]
-
 
 def get_clustering_method_options(advanced_available=True):
     """
@@ -157,7 +152,6 @@ def get_clustering_method_options(advanced_available=True):
 
     return options
 
-
 def get_distance_metric_options():
     """
     Get distance metric options.
@@ -170,7 +164,6 @@ def get_distance_metric_options():
         {'label': 'Euclidean √(2(1-corr))', 'value': 'euclidean'},
         {'label': 'Angular √(0.5(1-corr))', 'value': 'angular'},
     ]
-
 
 def should_show_distance_metric_selector(method, advanced_available):
     """
@@ -187,7 +180,6 @@ def should_show_distance_metric_selector(method, advanced_available):
         return {'margin-bottom': '15px', 'display': 'block'}
     else:
         return {'display': 'none'}
-
 
 def should_show_pca_loadings(method):
     """

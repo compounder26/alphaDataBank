@@ -262,7 +262,7 @@ def get_global_session() -> Optional[requests.Session]:
 
 
 # =============================================================================
-# Legacy Authentication Functions (moved from legacy/ace.py)
+# Additional Authentication Functions
 # =============================================================================
 
 # Constants for legacy functions

@@ -2,7 +2,6 @@
 Data Loading Callbacks
 
 Data loading and preloading callbacks with preserved functionality.
-Extracted from visualization_server.py lines 658-709 with exact logic preservation.
 """
 
 import dash
@@ -13,13 +12,11 @@ from dash.exceptions import PreventUpdate
 from .base_callbacks import CallbackWrapper, preserve_prevent_update_logic
 from ..services import get_analysis_service
 
-
 def register_data_loading_callbacks(app: dash.Dash):
     """
     Register data loading callbacks.
 
     CRITICAL: These callbacks handle the initial data loading and filter population.
-    Maintains exact compatibility with original visualization_server.py.
 
     Args:
         app: Dash application instance
@@ -37,7 +34,6 @@ def register_data_loading_callbacks(app: dash.Dash):
         """
         Preload analysis data callback.
 
-        EXACT COPY from visualization_server.py lines 658-677
         Preserves all logic, error handling, and data structures.
         """
         if not analysis_ops_data.get('available', False):
@@ -71,7 +67,6 @@ def register_data_loading_callbacks(app: dash.Dash):
         """
         Populate filter options callback.
 
-        EXACT COPY from visualization_server.py lines 679-709
         Preserves all logic for populating dropdowns and date ranges.
         """
         if not analysis_ops_data.get('available', False) or not preloaded_data:
@@ -112,7 +107,6 @@ def register_data_loading_callbacks(app: dash.Dash):
         """
         Update analysis data callback.
 
-        EXACT COPY from visualization_server.py lines 945-1034
         Preserves all logic for data filtering and summary creation.
         """
         if not analysis_ops_data.get('available', False):
@@ -228,7 +222,6 @@ def register_data_loading_callbacks(app: dash.Dash):
             return create_dataset_statistics_panel(analysis_data)
         return []
 
-
 def register_clustering_region_callbacks(app: dash.Dash):
     """
     Register clustering region selection callbacks.
@@ -249,7 +242,6 @@ def register_clustering_region_callbacks(app: dash.Dash):
         """
         Populate clustering region options.
 
-        EXACT COPY from visualization_server.py lines 711-723
         """
         if not available_regions:
             return [], None
@@ -268,10 +260,8 @@ def register_clustering_region_callbacks(app: dash.Dash):
         """
         Update the selected clustering region store.
 
-        EXACT COPY from visualization_server.py lines 800-807
         """
         return selected_region
-
 
 # Export for easy registration
 __all__ = ['register_data_loading_callbacks', 'register_clustering_region_callbacks']

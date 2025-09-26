@@ -2,13 +2,11 @@
 Base UI Components
 
 Common UI elements used throughout the dashboard.
-Extracted from visualization_server.py with preserved styling and functionality.
 """
 
 from typing import List, Dict, Any, Optional, Union
 from dash import html, dcc
 import dash_bootstrap_components as dbc
-
 
 def create_dashboard_header(title: str = "Alpha Analysis Dashboard",
                           subtitle: str = None) -> dbc.Row:
@@ -33,7 +31,6 @@ def create_dashboard_header(title: str = "Alpha Analysis Dashboard",
         ], width=12)
     ])
 
-
 def create_info_card(title: str, content: Any, header_color: str = None,
                     className: str = "mb-3") -> dbc.Card:
     """
@@ -56,7 +53,6 @@ def create_info_card(title: str, content: Any, header_color: str = None,
         dbc.CardHeader(**header_props),
         dbc.CardBody(content)
     ], className=className)
-
 
 def create_statistics_card(title: str, stats: List[Dict[str, Any]],
                           className: str = "mb-3") -> dbc.Card:
@@ -94,7 +90,6 @@ def create_statistics_card(title: str, stats: List[Dict[str, Any]],
         className=className
     )
 
-
 def create_method_selector(methods: List[Dict[str, Any]], selected_value: str = 'mds',
                           element_id: str = 'method-selector') -> dcc.RadioItems:
     """
@@ -116,7 +111,6 @@ def create_method_selector(methods: List[Dict[str, Any]], selected_value: str = 
         className="mb-3"
     )
 
-
 def create_view_mode_selector(view_modes: List[Dict[str, str]], selected_mode: str,
                              element_id: str, inline: bool = True) -> dbc.RadioItems:
     """
@@ -137,7 +131,6 @@ def create_view_mode_selector(view_modes: List[Dict[str, str]], selected_mode: s
         value=selected_mode,
         inline=inline
     )
-
 
 def create_alpha_badge(alpha_id: str, color: str = "primary",
                       href: str = None, clickable: bool = True,
@@ -176,7 +169,6 @@ def create_alpha_badge(alpha_id: str, color: str = "primary",
         badge_props['target'] = "_blank"
 
     return dbc.Badge(**badge_props)
-
 
 def create_alpha_list_container(alpha_ids: List[str], color: str = "primary",
                                max_height: str = "200px", show_limit: int = 50,
@@ -241,7 +233,6 @@ def create_alpha_list_container(alpha_ids: List[str], color: str = "primary",
 
     return container
 
-
 def create_loading_wrapper(content: Any, loading_id: str,
                           loading_type: str = "default") -> dcc.Loading:
     """
@@ -260,7 +251,6 @@ def create_loading_wrapper(content: Any, loading_id: str,
         type=loading_type,
         children=content
     )
-
 
 def create_expandable_list(items: List[str], title: str, color: str = "primary",
                           default_show: int = 10, badge_type: str = "text") -> dbc.AccordionItem:
@@ -301,7 +291,6 @@ def create_expandable_list(items: List[str], title: str, color: str = "primary",
         item_id=title.lower().replace(' ', '-')
     )
 
-
 def create_alert_message(message: str, alert_type: str = "info",
                         heading: str = None, dismissible: bool = False) -> dbc.Alert:
     """
@@ -326,7 +315,6 @@ def create_alert_message(message: str, alert_type: str = "info",
         color=alert_type,
         dismissable=dismissible
     )
-
 
 def create_progress_indicator(current: int, total: int, label: str = "") -> html.Div:
     """
@@ -353,7 +341,6 @@ def create_progress_indicator(current: int, total: int, label: str = "") -> html
         ),
         html.Small(f"{current} / {total} ({percentage:.1f}%)", className="text-muted")
     ])
-
 
 def create_tooltip_badge(text: str, tooltip: str, color: str = "primary",
                         className: str = "me-1 mb-1") -> html.Span:
@@ -383,7 +370,6 @@ def create_tooltip_badge(text: str, tooltip: str, color: str = "primary",
             placement="top"
         )
     ])
-
 
 def create_clickable_badge_with_action(text: str, action_id: Dict[str, Any],
                                      color: str = "primary", tooltip: str = None,
@@ -415,7 +401,6 @@ def create_clickable_badge_with_action(text: str, action_id: Dict[str, Any],
 
     return dbc.Badge(**badge_props)
 
-
 def create_summary_grid(items: List[Dict[str, Any]], columns: int = 3) -> dbc.Row:
     """
     Create summary statistics grid.
@@ -442,7 +427,6 @@ def create_summary_grid(items: List[Dict[str, Any]], columns: int = 3) -> dbc.Ro
 
     return dbc.Row(cols, className="mb-4")
 
-
 def create_data_type_badge(data_type: str) -> dbc.Badge:
     """
     Create standardized data type badge.
@@ -465,7 +449,6 @@ def create_data_type_badge(data_type: str) -> dbc.Badge:
         className="text-uppercase"
     )
 
-
 def create_region_info_text(alpha_count: int, timestamp: str) -> str:
     """
     Create region information text.
@@ -478,7 +461,6 @@ def create_region_info_text(alpha_count: int, timestamp: str) -> str:
         Formatted info text
     """
     return f"{alpha_count} alphas | Generated: {timestamp}"
-
 
 def create_usage_percentage_badge(used: int, total: int) -> html.Span:
     """
@@ -505,7 +487,6 @@ def create_usage_percentage_badge(used: int, total: int) -> html.Span:
         dbc.Badge(f"{percentage:.1f}%", color=color, className="small")
     ])
 
-
 def create_interactive_table_row(cells: List[Any], row_id: str = None) -> html.Tr:
     """
     Create interactive table row.
@@ -525,7 +506,6 @@ def create_interactive_table_row(cells: List[Any], row_id: str = None) -> html.T
         row_props['id'] = row_id
 
     return html.Tr(**row_props)
-
 
 def create_collapsible_section(title: str, content: Any,
                               default_open: bool = False,
@@ -560,7 +540,6 @@ def create_collapsible_section(title: str, content: Any,
         )
     ])
 
-
 def create_legend_component(legend_items: List[Dict[str, str]]) -> html.Div:
     """
     Create legend component for charts.
@@ -591,7 +570,6 @@ def create_legend_component(legend_items: List[Dict[str, str]]) -> html.Div:
 
     return html.Div(legend_elements)
 
-
 def create_section_header(title: str, icon: str = "", subtitle: str = "") -> html.Div:
     """
     Create section header with optional icon and subtitle.
@@ -612,7 +590,6 @@ def create_section_header(title: str, icon: str = "", subtitle: str = "") -> htm
         elements.append(html.P(subtitle, className="text-muted mb-3"))
 
     return html.Div(elements)
-
 
 def create_empty_state_message(message: str, icon: str = "📊",
                               suggestion: str = None) -> html.Div:
@@ -637,7 +614,6 @@ def create_empty_state_message(message: str, icon: str = "📊",
         )
 
     return html.Div(content, className="p-5")
-
 
 def create_action_button(text: str, button_id: Any, color: str = "primary",
                         size: str = "md", outline: bool = False,
@@ -665,7 +641,6 @@ def create_action_button(text: str, button_id: Any, color: str = "primary",
         className=className,
         n_clicks=0
     )
-
 
 def create_dataset_statistics_panel(analysis_data: Dict[str, Any],
                                    show_top_datasets: bool = True,

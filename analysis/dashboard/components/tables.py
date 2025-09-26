@@ -2,7 +2,6 @@
 Table Components
 
 Reusable table and list components for displaying data.
-Extracted from visualization_server.py with preserved functionality.
 """
 
 from typing import List, Dict, Any, Optional, Tuple
@@ -10,7 +9,6 @@ from dash import html, dcc
 import dash_bootstrap_components as dbc
 
 from .base_components import create_alpha_badge, create_data_type_badge, create_action_button, create_clickable_badge_with_action
-
 
 def create_alpha_table(alphas: List[Dict[str, Any]], max_rows: int = 20,
                       show_code: bool = True, table_id: str = None) -> dbc.Table:
@@ -77,7 +75,6 @@ def create_alpha_table(alphas: List[Dict[str, Any]], max_rows: int = 20,
         table_props['id'] = table_id
 
     return dbc.Table(**table_props)
-
 
 def create_recommendations_table(recommendations: List[Dict[str, Any]]) -> dbc.Table:
     """
@@ -191,7 +188,6 @@ def create_recommendations_table(recommendations: List[Dict[str, Any]]) -> dbc.T
         html.Tbody(table_rows)
     ], striped=True, bordered=True, hover=True, responsive=True, size="sm")
 
-
 def create_statistics_list(statistics: List[Dict[str, Any]]) -> dbc.ListGroup:
     """
     Create statistics list component.
@@ -220,7 +216,6 @@ def create_statistics_list(statistics: List[Dict[str, Any]]) -> dbc.ListGroup:
         items.append(dbc.ListGroupItem(item_content))
 
     return dbc.ListGroup(items, flush=True)
-
 
 def create_scrollable_list(items: List[Any], max_height: str = "300px",
                           list_id: str = None, className: str = "") -> html.Div:
@@ -252,7 +247,6 @@ def create_scrollable_list(items: List[Any], max_height: str = "300px",
 
     return html.Div(**div_props)
 
-
 def create_alpha_summary_card(total_alphas: int, summary_stats: List[Dict[str, Any]]) -> dbc.Card:
     """
     Create alpha summary card with statistics.
@@ -279,7 +273,6 @@ def create_alpha_summary_card(total_alphas: int, summary_stats: List[Dict[str, A
             ])
         ])
     ], className="mb-4")
-
 
 def create_breakdown_table(items: List[Tuple[str, int]], title: str = "Breakdown",
                           show_percentage: bool = True, total: int = None) -> html.Div:
@@ -317,7 +310,6 @@ def create_breakdown_table(items: List[Tuple[str, int]], title: str = "Breakdown
             html.Tbody(rows)
         ], borderless=True, size="sm")
     ])
-
 
 def create_expandable_alpha_list(alpha_ids: List[str], operator: str = None,
                                datafield: str = None, initial_limit: int = 50) -> html.Div:
@@ -390,7 +382,6 @@ def create_expandable_alpha_list(alpha_ids: List[str], operator: str = None,
 
     return html.Div(container_content, id=container_id)
 
-
 def create_datafield_details_table(datafield_info_list: List[Dict[str, Any]]) -> List[Any]:
     """
     Create detailed table for datafield information.
@@ -437,7 +428,6 @@ def create_datafield_details_table(datafield_info_list: List[Dict[str, Any]]) ->
 
     return cards
 
-
 def create_usage_breakdown_list(breakdown_data: Dict[str, int],
                               title: str = "Usage Breakdown") -> html.Div:
     """
@@ -461,7 +451,6 @@ def create_usage_breakdown_list(breakdown_data: Dict[str, int],
         html.Strong(f"{title}:"),
         html.Ul(items)
     ])
-
 
 def create_cluster_breakdown_list(cluster_info: Dict[str, List[str]],
                                 total_alphas: int) -> dbc.ListGroup:
@@ -513,7 +502,6 @@ def create_cluster_breakdown_list(cluster_info: Dict[str, List[str]],
 
     return dbc.ListGroup(cluster_items, flush=True)
 
-
 def create_dataset_info_list(dataset_datafields: List[Tuple[str, int]],
                            max_height: str = "300px") -> html.Div:
     """
@@ -546,7 +534,6 @@ def create_dataset_info_list(dataset_datafields: List[Tuple[str, int]],
         'border': '1px solid #dee2e6',
         'border-radius': '4px'
     })
-
 
 def create_performance_summary_table(alphas: List[Dict[str, Any]],
                                    max_rows: int = 10) -> dbc.Table:
@@ -586,7 +573,6 @@ def create_performance_summary_table(alphas: List[Dict[str, Any]],
         html.Tbody(rows)
     ], striped=True, hover=True, responsive=True, size="sm")
 
-
 def create_region_alpha_breakdown(usage_info: Dict[str, List[str]],
                                 limit_per_region: int = 20) -> List[Any]:
     """
@@ -619,7 +605,6 @@ def create_region_alpha_breakdown(usage_info: Dict[str, List[str]],
         content_parts.append(region_section)
 
     return content_parts
-
 
 def create_interactive_badge_list(items: List[Dict[str, Any]],
                                 badge_type: str = "clickable") -> html.Div:

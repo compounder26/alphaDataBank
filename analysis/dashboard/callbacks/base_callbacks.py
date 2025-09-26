@@ -2,7 +2,6 @@
 Base callback utilities and registration system.
 
 Provides safe callback extraction with dependency preservation.
-Maintains exact compatibility with existing visualization_server.py patterns.
 """
 
 from typing import Dict, List, Any, Callable, Optional, Union

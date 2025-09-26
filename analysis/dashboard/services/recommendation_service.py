@@ -2,7 +2,6 @@
 Recommendation Service
 
 Business logic for datafield recommendations and cross-analysis.
-Extracted from visualization_server.py with full backward compatibility.
 """
 
 from typing import Dict, List, Any, Optional
@@ -10,7 +9,6 @@ from sqlalchemy import text
 
 from .data_service import create_analysis_operations
 from ..utils import cached
-
 
 class RecommendationService:
     """Service for handling datafield recommendations and cross-analysis."""
@@ -343,10 +341,154 @@ class RecommendationService:
             print(f"Error fetching alphas for neutralization {neutralization}: {e}")
             return []
 
+    def get_alphas_by_datafield_and_region(self, datafield_id: str, region: str) -> List[str]:
+        """
+        Get list of alpha IDs using a specific datafield in a specific region.
+
+        Args:
+            datafield_id: Datafield identifier
+            region: Region name
+
+        Returns:
+            List of alpha IDs
+        """
+        try:
+            analysis_ops = self._get_analysis_ops()
+            db_engine = analysis_ops._get_db_engine()
+
+            with db_engine.connect() as connection:
+                query = text("""
+                    SELECT DISTINCT a.alpha_id
+                    FROM alphas a
+                    JOIN regions r ON a.region_id = r.region_id
+                    JOIN alpha_analysis_cache ac ON a.alpha_id = ac.alpha_id
+                    WHERE r.region_name = :region
+                    AND ac.datafields_unique::jsonb ? :datafield_id
+                    ORDER BY a.alpha_id
+                """)
+
+                result = connection.execute(query, {
+                    'region': region,
+                    'datafield_id': datafield_id
+                })
+
+                return [row.alpha_id for row in result]
+
+        except Exception as e:
+            print(f"Error getting alphas for datafield {datafield_id} in region {region}: {e}")
+            return []
+
+    def get_matching_datafields_in_region(self, source_datafield_id: str, target_region: str) -> List[Dict[str, Any]]:
+        """
+        Get matching datafields available in a target region based on a source datafield.
+
+        Args:
+            source_datafield_id: Source datafield identifier
+            target_region: Target region name
+
+        Returns:
+            List of matching datafield information
+        """
+        try:
+            analysis_ops = self._get_analysis_ops()
+
+            # Get source datafield info
+            source_info = analysis_ops.parser.datafields.get(source_datafield_id, {})
+            if not source_info:
+                # Try to get from database instead
+                db_engine = analysis_ops._get_db_engine()
+                with db_engine.connect() as connection:
+                    query = text("""
+                        SELECT DISTINCT data_description
+                        FROM datafields
+                        WHERE datafield_id = :datafield_id
+                        LIMIT 1
+                    """)
+                    result = connection.execute(query, {'datafield_id': source_datafield_id})
+                    row = result.fetchone()
+                    if row:
+                        source_description = row.data_description or ''
+                    else:
+                        source_description = ''
+            else:
+                source_description = source_info.get('data_description', '')
+
+            # Find matching datafields available in target region
+            matching_datafields = []
+
+            # Query for datafields available in target region (not just used ones)
+            db_engine = analysis_ops._get_db_engine()
+            with db_engine.connect() as connection:
+                # Get datafields available in target region from datafields table
+                query = text("""
+                    SELECT DISTINCT datafield_id, data_description, dataset_id,
+                           data_category, data_type, delay
+                    FROM datafields
+                    WHERE region = :region
+                    AND datafield_id IS NOT NULL AND datafield_id != ''
+                """)
+
+                result = connection.execute(query, {'region': target_region})
+                region_datafields_info = {
+                    row.datafield_id: {
+                        'data_description': row.data_description,
+                        'dataset_id': row.dataset_id,
+                        'data_category': row.data_category,
+                        'data_type': row.data_type,
+                        'delay': row.delay
+                    }
+                    for row in result
+                }
+                region_datafields = set(region_datafields_info.keys())
+
+            # Check for matches based on description similarity
+            for df_id in region_datafields:
+                df_info = region_datafields_info[df_id]
+                df_description = df_info.get('data_description', '')
+
+                # Simple matching: same description or contains source datafield base name
+                if source_description and df_description:
+                    # Check if descriptions match (case-insensitive)
+                    if df_description.lower() == source_description.lower():
+                        matching_datafields.append({
+                            'id': df_id,
+                            'description': df_description,
+                            'dataset': df_info.get('dataset_id', 'Unknown'),
+                            'category': df_info.get('data_category', 'Unknown'),
+                            'data_type': df_info.get('data_type', 'Unknown'),
+                            'delay': df_info.get('delay', 0)
+                        })
+                    # Also check if the base name matches (e.g., 'equity' part of 'equity_usa')
+                    elif source_datafield_id.split('_')[0].lower() in df_id.lower():
+                        matching_datafields.append({
+                            'id': df_id,
+                            'description': df_description,
+                            'dataset': df_info.get('dataset_id', 'Unknown'),
+                            'category': df_info.get('data_category', 'Unknown'),
+                            'data_type': df_info.get('data_type', 'Unknown'),
+                            'delay': df_info.get('delay', 0)
+                        })
+
+            # If no description-based matches, check if the exact datafield ID exists
+            if not matching_datafields and source_datafield_id in region_datafields:
+                df_info = region_datafields_info[source_datafield_id]
+                matching_datafields.append({
+                    'id': source_datafield_id,
+                    'description': df_info.get('data_description', 'Same datafield available'),
+                    'dataset': df_info.get('dataset_id', 'Unknown'),
+                    'category': df_info.get('data_category', 'Unknown'),
+                    'data_type': df_info.get('data_type', 'Unknown'),
+                    'delay': df_info.get('delay', 0)
+                })
+
+            return matching_datafields[:10]  # Limit to 10 results
+
+        except Exception as e:
+            print(f"Error getting matching datafields for {source_datafield_id} in {target_region}: {e}")
+            return []
 
 # Global service instance
 _recommendation_service_instance = None
-
 
 def get_recommendation_service() -> RecommendationService:
     """Get singleton recommendation service instance."""
@@ -354,7 +496,6 @@ def get_recommendation_service() -> RecommendationService:
     if _recommendation_service_instance is None:
         _recommendation_service_instance = RecommendationService()
     return _recommendation_service_instance
-
 
 def reset_recommendation_service():
     """Reset recommendation service instance (for testing)."""

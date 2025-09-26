@@ -2,7 +2,6 @@
 Analysis Content Functions
 
 Content creation functions for neutralization and cross-analysis views.
-Extracted from visualization_server.py lines 2204-2350 with exact logic preservation.
 """
 
 import plotly.express as px
@@ -11,12 +10,10 @@ import dash_bootstrap_components as dbc
 
 from ..components import create_recommendation_filters, create_loading_wrapper
 
-
 def create_cross_analysis_content(analysis_data):
     """
     Create cross-analysis content with datafield recommendations.
 
-    EXACT COPY from visualization_server.py lines 2204-2265
     """
     return dbc.Row([
         dbc.Col([
@@ -35,12 +32,10 @@ def create_cross_analysis_content(analysis_data):
         ])
     ])
 
-
 def create_neutralization_content(analysis_data):
     """
     Create neutralization analysis content.
 
-    EXACT COPY from visualization_server.py lines 2267-2350
     """
     metadata = analysis_data.get('metadata', {})
     neutralizations = metadata.get('neutralizations', {})

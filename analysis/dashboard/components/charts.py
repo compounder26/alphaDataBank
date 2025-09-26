@@ -2,7 +2,6 @@
 Chart Components
 
 Reusable chart components and graph containers for the dashboard.
-Extracted from visualization_server.py with preserved styling and functionality.
 """
 
 from typing import Any, Dict, Optional, List
@@ -11,7 +10,6 @@ import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 
 from .base_components import create_loading_wrapper, create_info_card
-
 
 def create_main_clustering_plot(plot_id: str = 'clustering-plot',
                                height: str = '85vh') -> dbc.Card:
@@ -34,7 +32,6 @@ def create_main_clustering_plot(plot_id: str = 'clustering-plot',
             )
         ])
     ])
-
 
 def create_pca_loadings_plot(plot_id: str = 'pca-loadings-heatmap',
                            height: str = '400px',
@@ -66,7 +63,6 @@ def create_pca_loadings_plot(plot_id: str = 'pca-loadings-heatmap',
         style={'display': 'none'}
     )
 
-
 def create_operators_chart_container(chart_id: str = 'operators-chart',
                                    container_id: str = "operators-chart-container") -> html.Div:
     """
@@ -91,7 +87,6 @@ def create_operators_chart_container(chart_id: str = 'operators-chart',
         'position': 'relative'
     })
 
-
 def create_all_operators_chart_container(chart_id: str = 'all-operators-chart',
                                        container_id: str = "all-operators-container") -> html.Div:
     """
@@ -114,7 +109,6 @@ def create_all_operators_chart_container(chart_id: str = 'all-operators-chart',
         'min-height': '700px',
         'max-width': '100%'
     })
-
 
 def create_datafields_chart_container(chart_id: str, title: str,
                                     container_style: Dict[str, Any] = None) -> html.Div:
@@ -153,7 +147,6 @@ def create_datafields_chart_container(chart_id: str, title: str,
         dcc.Graph(id=chart_id, style={'height': 'calc(100% - 40px)'})
     ], style=default_style)
 
-
 def create_statistics_panel(stats_id: str, title: str = "Usage Statistics") -> html.Div:
     """
     Create statistics panel component.
@@ -175,7 +168,6 @@ def create_statistics_panel(stats_id: str, title: str = "Usage Statistics") -> h
         'padding': '10px',
         'background-color': 'white'
     })
-
 
 def create_responsive_chart_grid(charts: List[Dict[str, Any]]) -> html.Div:
     """
@@ -207,7 +199,6 @@ def create_responsive_chart_grid(charts: List[Dict[str, Any]]) -> html.Div:
         }
     )
 
-
 def create_chart_with_loading(chart_id: str, loading_id: str,
                              height: str = '400px',
                              loading_type: str = "default") -> dcc.Loading:
@@ -228,7 +219,6 @@ def create_chart_with_loading(chart_id: str, loading_id: str,
         loading_id=loading_id,
         loading_type=loading_type
     )
-
 
 def create_empty_chart_placeholder(message: str = "No data available") -> go.Figure:
     """
@@ -255,7 +245,6 @@ def create_empty_chart_placeholder(message: str = "No data available") -> go.Fig
     )
     return fig
 
-
 def create_treemap_container(chart_id: str = 'dataset-treemap-main',
                            height: str = '750px') -> dcc.Graph:
     """
@@ -272,7 +261,6 @@ def create_treemap_container(chart_id: str = 'dataset-treemap-main',
         id=chart_id,
         style={'height': height}
     )
-
 
 def create_chart_info_panel(info_id: str, title: str,
                            description: str = None) -> dbc.Card:
@@ -297,7 +285,6 @@ def create_chart_info_panel(info_id: str, title: str,
         content=content
     )
 
-
 def create_cluster_statistics_panel() -> dbc.Card:
     """
     Create cluster statistics panel.
@@ -310,7 +297,6 @@ def create_cluster_statistics_panel() -> dbc.Card:
         content=html.Div(id='cluster-statistics', className="p-2")
     )
 
-
 def create_alpha_details_panel() -> dbc.Card:
     """
     Create alpha details panel.
@@ -322,7 +308,6 @@ def create_alpha_details_panel() -> dbc.Card:
         title="Alpha Details",
         content=html.Div(id='alpha-details', className="p-3")
     )
-
 
 def create_clustering_info_card() -> dbc.Card:
     """
@@ -344,7 +329,6 @@ def create_clustering_info_card() -> dbc.Card:
         ]
     )
 
-
 def create_chart_controls_row(controls: List[Any]) -> dbc.Row:
     """
     Create row of chart controls.
@@ -362,7 +346,6 @@ def create_chart_controls_row(controls: List[Any]) -> dbc.Row:
         cols.append(dbc.Col(control, width=col_width))
 
     return dbc.Row(cols, className="mb-3")
-
 
 def create_chart_explanation_alert(title: str, points: List[str],
                                  alert_type: str = "light") -> dbc.Alert:

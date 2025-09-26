@@ -2,7 +2,6 @@
 Datafields Content Functions
 
 Content creation functions for datafields analysis views.
-Extracted from visualization_server.py lines 1341-2200 with exact logic preservation.
 """
 
 import pandas as pd
@@ -15,12 +14,10 @@ import dash_bootstrap_components as dbc
 from ..config import TEMPLATE
 from ..services import create_analysis_operations, get_analysis_service
 
-
 def create_datafields_content(analysis_data, view_mode='top20'):
     """
     Create datafields analysis content with different view modes.
 
-    EXACT COPY from visualization_server.py lines 1341-1376
     """
     datafields_data = analysis_data.get('datafields', {})
     top_datafields = datafields_data.get('top_datafields', [])
@@ -57,12 +54,10 @@ def create_datafields_content(analysis_data, view_mode='top20'):
     else:
         return html.Div([view_selector, create_top20_datafields_content(analysis_data)])
 
-
 def create_all_datafields_content(analysis_data):
     """
     Create view showing all used datafields with their counts.
 
-    EXACT COPY from visualization_server.py lines 1397-1431
     """
     datafields_data = analysis_data.get('datafields', {})
     all_used_datafields = datafields_data.get('top_datafields', [])
@@ -98,12 +93,10 @@ def create_all_datafields_content(analysis_data):
         ], width=12)
     ])
 
-
 def create_all_datasets_content(analysis_data):
     """
     Create view showing all used datasets with their counts.
 
-    EXACT COPY from visualization_server.py lines 1433-1500
     """
     datafields_data = analysis_data.get('datafields', {})
     unique_usage = datafields_data.get('unique_usage', {})
@@ -173,12 +166,10 @@ def create_all_datasets_content(analysis_data):
         ], width=12)
     ])
 
-
 def create_top20_datafields_content(analysis_data):
     """
     Create the original top 20 datafields view.
 
-    EXTRACTED from visualization_server.py lines 1502-1800 (complex grid layout)
     """
     datafields_data = analysis_data.get('datafields', {})
     top_datafields = datafields_data.get('top_datafields', [])
@@ -259,12 +250,9 @@ def create_top20_datafields_content(analysis_data):
         ], width=12)
     ])
 
-
 def create_dataset_treemap_content(analysis_data):
     """
     Create enhanced treemap view showing datasets with usage patterns.
-
-    SIMPLIFIED from visualization_server.py lines 1957-2107
     """
     # Use chart service for treemap creation
     from ..services import get_analysis_service
@@ -300,12 +288,10 @@ def create_dataset_treemap_content(analysis_data):
 
     return dcc.Graph(id='dataset-treemap-main', figure=fig, style={'height': '750px'})
 
-
 def get_dataset_treemap_sidebar_info(analysis_data):
     """
     Get sidebar information panels for the dataset treemap view.
 
-    EXTRACTED from visualization_server.py lines 2109-2202
     """
     from ..services import get_analysis_service
 
@@ -365,12 +351,10 @@ def get_dataset_treemap_sidebar_info(analysis_data):
 
     return [legend_panel]
 
-
 def create_dataset_treemap_content(analysis_data):
     """
     Create enhanced treemap view showing datasets with usage patterns.
 
-    EXTRACTED from visualization_server.py lines 1957-2107
     """
     # Use the chart service for treemap creation
     from ..services import get_chart_service, get_analysis_service
@@ -405,12 +389,9 @@ def create_dataset_treemap_content(analysis_data):
 
     return dcc.Graph(id='dataset-treemap-main', figure=fig, style={'height': '750px'})
 
-
 def create_top20_datafields_content(analysis_data):
     """
     Create the original top 20 datafields view with grid layout.
-
-    SIMPLIFIED from visualization_server.py lines 1502-1800 (removed complex grid)
     """
     datafields_data = analysis_data.get('datafields', {})
     top_datafields = datafields_data.get('top_datafields', [])
@@ -486,7 +467,6 @@ def create_top20_datafields_content(analysis_data):
         ], width=12)
     ])
 
-
 def _calculate_category_and_dataset_counts(datafields_data):
     """Calculate category and dataset counts for charts."""
     category_counts = {}
@@ -537,7 +517,6 @@ def _calculate_category_and_dataset_counts(datafields_data):
 
     return category_counts, dataset_counts
 
-
 def _create_category_pie_chart(category_counts):
     """Create category pie chart."""
     if category_counts:
@@ -577,7 +556,6 @@ def _create_category_pie_chart(category_counts):
         )
 
     return fig2
-
 
 def _create_dataset_treemap(dataset_counts):
     """Create dataset treemap."""

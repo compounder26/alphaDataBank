@@ -115,24 +115,23 @@ def main():
 
     # Import here to avoid import errors if dependencies are missing
     try:
-        # Temporarily modify sys.argv to pass arguments to the visualization server
+        # Prepare arguments for the dashboard server
         original_argv = sys.argv.copy()
-        sys.argv = ['visualization_server.py']
-        
-        
+        sys.argv = ['dashboard_server']  # Use a cleaner name for sys.argv[0]
+
         sys.argv.extend(['--port', str(args.port)])
-        
+
         if args.debug:
             sys.argv.append('--debug')
-        
-        # Pass dynamic data files if available (regardless of whether they were just fetched or already existed)
+
+        # Pass dynamic data files if available
         if dynamic_operators_file:
             sys.argv.extend(['--operators-file', dynamic_operators_file])
-        
+
         # Use refactored dashboard server
         from analysis.dashboard.server import main as server_main
         server_main()
-        
+
     except ImportError as e:
         print(f"Error: Missing required dependencies: {e}")
         print("\nPlease install required packages:")

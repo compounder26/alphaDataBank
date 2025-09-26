@@ -2,7 +2,6 @@
 Chart Interaction Callbacks
 
 Main clustering plot and chart interaction callbacks.
-Extracted from visualization_server.py lines 2515-3640 with exact logic preservation.
 """
 
 import dash
@@ -16,13 +15,11 @@ import numpy as np
 from .base_callbacks import CallbackWrapper, preserve_prevent_update_logic
 from ..services import get_chart_service, get_clustering_service, get_alpha_details_for_clustering
 
-
 def register_chart_interaction_callbacks(app: dash.Dash):
     """
     Register chart interaction callbacks.
 
     CRITICAL: These callbacks handle the main clustering plot and method explanations.
-    Maintains exact compatibility with original visualization_server.py.
 
     Args:
         app: Dash application instance
@@ -39,7 +36,6 @@ def register_chart_interaction_callbacks(app: dash.Dash):
         """
         Provide mathematical explanation for the selected clustering method.
 
-        EXACT COPY from visualization_server.py lines 2516-2629
         Preserves all method explanations and mathematical content.
         """
         explanations = {
@@ -168,7 +164,6 @@ def register_chart_interaction_callbacks(app: dash.Dash):
         """
         Update cluster statistics display.
 
-        EXACT COPY from visualization_server.py lines 2631-2802
         Preserves all cluster analysis and statistics generation logic.
         """
         # Handle heatmap method (no cluster statistics)
@@ -317,7 +312,6 @@ def register_chart_interaction_callbacks(app: dash.Dash):
         """
         Update PCA dynamic information.
 
-        EXACT COPY from visualization_server.py lines 3554-3640
         Preserves all PCA information display logic.
         """
         if method != 'pca' or not pca_info:
@@ -414,7 +408,6 @@ def register_chart_interaction_callbacks(app: dash.Dash):
         """
         Update PCA loadings heatmap.
 
-        EXACT COPY from visualization_server.py lines 3641-3799
         Preserves all PCA loadings visualization logic.
         """
         if method != 'pca' or not pca_info or 'loadings' not in pca_info:
@@ -431,7 +424,6 @@ def register_chart_interaction_callbacks(app: dash.Dash):
         # Use chart service for complex PCA loadings chart creation
         chart_service = get_chart_service()
         return chart_service.create_pca_loadings_heatmap(pca_info)
-
 
 # Export for easy registration
 __all__ = ['register_chart_interaction_callbacks']

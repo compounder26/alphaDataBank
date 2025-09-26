@@ -2,7 +2,6 @@
 Main Clustering Plot Callback
 
 The critical main clustering plot update callback.
-Extracted from visualization_server.py lines 2804-3551 with logic preservation.
 """
 
 import dash
@@ -16,13 +15,11 @@ import numpy as np
 from .base_callbacks import CallbackWrapper, preserve_prevent_update_logic
 from ..services import get_chart_service
 
-
 def register_main_plot_callback(app: dash.Dash):
     """
     Register the main clustering plot callback.
 
     CRITICAL: This is the core visualization callback that handles all clustering methods.
-    Maintains exact compatibility with original visualization_server.py.
 
     Args:
         app: Dash application instance
@@ -63,7 +60,6 @@ def register_main_plot_callback(app: dash.Dash):
         """
         Update main clustering plot.
 
-        SIMPLIFIED from visualization_server.py lines 2824-3551
         Uses chart service for complex logic while preserving exact behavior.
         """
         # Handle distance metric availability
@@ -155,8 +151,6 @@ def register_main_plot_callback(app: dash.Dash):
     def display_alpha_details(clickData, metadata_data, method):
         """
         Display alpha details when a point is clicked.
-
-        SIMPLIFIED from visualization_server.py lines 3801-4014
         """
         if not clickData:
             return "Click on a point to see alpha details.", None
@@ -208,7 +202,6 @@ def register_main_plot_callback(app: dash.Dash):
 
         return details, {'index': alpha_id}
 
-
 def _create_empty_plot_figure(method):
     """Create empty plot figure with message."""
     fig = go.Figure()
@@ -226,7 +219,6 @@ def _create_empty_plot_figure(method):
         yaxis=dict(visible=False)
     )
     return fig
-
 
 def _handle_heatmap_click(point):
     """Handle heatmap click for dual alpha display."""
@@ -255,7 +247,6 @@ def _handle_heatmap_click(point):
             return html.P(f"Error loading details: {str(e)}", className="text-danger"), None
     else:
         return "Unable to extract alpha IDs from heatmap click.", None
-
 
 # Export for easy registration
 __all__ = ['register_main_plot_callback']

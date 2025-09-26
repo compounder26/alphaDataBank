@@ -2,7 +2,6 @@
 Data Service
 
 Core data loading, caching, and region management for the dashboard.
-Extracted from visualization_server.py with full backward compatibility.
 """
 
 import os
@@ -25,12 +24,10 @@ from sqlalchemy import text
 
 from ..utils import cached
 
-
 # Global operators list for dynamic operators (preserve original globals)
 DYNAMIC_OPERATORS_LIST = None
 DYNAMIC_DATAFIELDS_LIST = None
 _analysis_ops_instance = None
-
 
 def create_analysis_operations(operators_file: Optional[str] = None,
                               operators_list: Optional[List[str]] = None,
@@ -77,7 +74,6 @@ def create_analysis_operations(operators_file: Optional[str] = None,
 
     return _analysis_ops_instance
 
-
 def set_tier_operators_and_datafields(operators_list: List[str], datafields_list: Optional[List[str]] = None):
     """
     Set the global tier-specific operators and datafields lists.
@@ -94,12 +90,10 @@ def set_tier_operators_and_datafields(operators_list: List[str], datafields_list
     # Reset singleton to pick up new settings
     reset_analysis_operations()
 
-
 def reset_analysis_operations():
     """Reset the singleton instance (useful for testing or config changes)."""
     global _analysis_ops_instance
     _analysis_ops_instance = None
-
 
 @cached(ttl=300)  # Cache for 5 minutes
 def get_alpha_details_for_clustering(alpha_ids: List[str]) -> Dict[str, Dict]:
@@ -160,7 +154,6 @@ def get_alpha_details_for_clustering(alpha_ids: List[str]) -> Dict[str, Dict]:
         print(f"Error fetching alpha details: {e}")
         return {}
 
-
 def load_clustering_data(filepath: str) -> Dict[str, Any]:
     """
     Load clustering data from a JSON file.
@@ -175,7 +168,6 @@ def load_clustering_data(filepath: str) -> Dict[str, Any]:
         data = json.load(f)
 
     return data
-
 
 @cached(ttl=600)  # Cache for 10 minutes
 def load_all_region_data() -> Dict[str, Any]:
@@ -207,7 +199,6 @@ def load_all_region_data() -> Dict[str, Any]:
     print(f"Successfully loaded clustering data for {len(all_region_data)} regions")
     return all_region_data
 
-
 def get_available_regions_from_files() -> List[str]:
     """
     Get list of regions that have clustering data files available.
@@ -224,7 +215,6 @@ def get_available_regions_from_files() -> List[str]:
             available_regions.append(region)
 
     return available_regions
-
 
 def load_tier_specific_datafields() -> List[str]:
     """
@@ -258,7 +248,6 @@ def load_tier_specific_datafields() -> List[str]:
     except Exception as e:
         print(f"Error loading tier-specific datafields: {e}")
         return []
-
 
 def load_operators_data(operators_file: str) -> List[str]:
     """
@@ -318,7 +307,6 @@ def load_operators_data(operators_file: str) -> List[str]:
         print(f"Error loading operators: {e}")
         return []
 
-
 def validate_clustering_data(data: Dict[str, Any]) -> tuple[bool, List[str]]:
     """
     Validate clustering data structure.
@@ -359,7 +347,6 @@ def validate_clustering_data(data: Dict[str, Any]) -> tuple[bool, List[str]]:
 
     return len(errors) == 0, errors
 
-
 def get_data_file_info(filepath: str) -> Dict[str, Any]:
     """
     Get information about a data file.
@@ -385,7 +372,6 @@ def get_data_file_info(filepath: str) -> Dict[str, Any]:
             'error': str(e),
             'exists': False
         }
-
 
 def cleanup_cached_data():
     """Clean up cached data and reset instances."""

@@ -2,7 +2,6 @@
 Operators Content Functions
 
 Content creation functions for operators analysis views.
-Extracted from visualization_server.py lines 1098-1340 with exact logic preservation.
 """
 
 import pandas as pd
@@ -13,12 +12,10 @@ import dash_bootstrap_components as dbc
 from ..config import TEMPLATE
 from ..services import load_operators_data, get_analysis_service
 
-
 def create_operators_content(analysis_data, view_mode='top20'):
     """
     Create operators analysis content with different view modes.
 
-    EXACT COPY from visualization_server.py lines 1057-1088
     """
     operators_data = analysis_data.get('operators', {})
     top_operators = operators_data.get('top_operators', [])
@@ -51,12 +48,10 @@ def create_operators_content(analysis_data, view_mode='top20'):
     else:
         return html.Div([view_selector, create_top20_operators_content(analysis_data)])
 
-
 def create_usage_analysis_content(analysis_data):
     """
     Create comprehensive usage analysis showing all platform operators.
 
-    EXACT COPY from visualization_server.py lines 1098-1210
     """
     operators_data = analysis_data.get('operators', {})
     used_operators = dict(operators_data.get('top_operators', []))
@@ -139,12 +134,10 @@ def create_usage_analysis_content(analysis_data):
         ])
     ])
 
-
 def create_all_operators_content(analysis_data):
     """
     Create view showing all used operators with their counts.
 
-    EXACT COPY from visualization_server.py lines 1212-1257
     """
     operators_data = analysis_data.get('operators', {})
     all_used_operators = operators_data.get('top_operators', [])
@@ -191,12 +184,10 @@ def create_all_operators_content(analysis_data):
         ], width=12)
     ])
 
-
 def create_top20_operators_content(analysis_data):
     """
     Create the original top 20 operators view.
 
-    EXACT COPY from visualization_server.py lines 1259-1339
     """
     operators_data = analysis_data.get('operators', {})
     top_operators = operators_data.get('top_operators', [])

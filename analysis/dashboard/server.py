@@ -2,7 +2,6 @@
 Dashboard Server Entry Point
 
 Server startup and CLI handling for the Alpha Analysis Dashboard.
-Extracted from visualization_server.py main() function with preserved functionality.
 """
 
 import os
@@ -27,22 +26,18 @@ from .services import (
 )
 from .config import DASHBOARD_SETTINGS, DEFAULT_OPERATORS_FILE
 
-
 def open_browser(port, delay=1):
     """
     Open browser after a delay.
 
-    EXACT COPY from visualization_server.py lines 5181-5184
     """
     time.sleep(delay)
     webbrowser.open(f'http://localhost:{port}')
-
 
 def main():
     """
     Run the analysis and visualization server.
 
-    EXACT COPY from visualization_server.py main() function lines 5219-5313
     Preserves all CLI arguments and startup logic.
     """
     parser = argparse.ArgumentParser(description="Alpha Analysis & Clustering Dashboard")
@@ -112,7 +107,6 @@ def main():
         print("- Try a different port with --port argument")
         print("- Ensure all required dependencies are installed")
 
-
 def create_production_app():
     """
     Create app for production deployment (WSGI).
@@ -121,7 +115,6 @@ def create_production_app():
         Dash app configured for production
     """
     return create_visualization_app()
-
 
 def start_development_server(port: int = None, debug: bool = True, open_browser: bool = True):
     """
@@ -142,7 +135,6 @@ def start_development_server(port: int = None, debug: bool = True, open_browser:
 
     print(f"Starting development server on port {port}")
     app.run(debug=debug, port=port, host='127.0.0.1')
-
 
 if __name__ == "__main__":
     main()

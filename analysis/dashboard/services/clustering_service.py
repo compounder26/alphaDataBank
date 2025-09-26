@@ -2,7 +2,6 @@
 Clustering Service
 
 Business logic for clustering operations, coordinate transformations, and data processing.
-Extracted from visualization_server.py with full backward compatibility.
 """
 
 import pandas as pd
@@ -12,7 +11,6 @@ from typing import Dict, List, Any, Optional, Tuple
 from .data_service import load_all_region_data
 from ..models import ClusteringData, CoordinateData
 from ..utils import cached
-
 
 class ClusteringService:
     """Service for handling clustering operations and coordinate data."""
@@ -491,10 +489,8 @@ class ClusteringService:
 
         return formatted
 
-
 # Global service instance
 _clustering_service_instance = None
-
 
 def get_clustering_service() -> ClusteringService:
     """Get singleton clustering service instance."""
@@ -502,7 +498,6 @@ def get_clustering_service() -> ClusteringService:
     if _clustering_service_instance is None:
         _clustering_service_instance = ClusteringService()
     return _clustering_service_instance
-
 
 def reset_clustering_service():
     """Reset clustering service instance (for testing)."""

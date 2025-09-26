@@ -2,7 +2,6 @@
 Analysis Tab Layout
 
 Layout structure for the expression analysis tab.
-Extracted from visualization_server.py with preserved functionality.
 """
 
 from dash import html, dcc
@@ -20,7 +19,6 @@ from ..components import (
 from .operators_content import create_operators_content
 from .datafields_content import create_datafields_content, get_dataset_treemap_sidebar_info
 from .analysis_content import create_neutralization_content, create_cross_analysis_content
-
 
 def create_analysis_tab_content() -> dbc.Row:
     """
@@ -73,7 +71,6 @@ def create_analysis_tab_content() -> dbc.Row:
         ], width=9)
     ])
 
-
 def create_operators_view_selector() -> dbc.Card:
     """
     Create operators view mode selector.
@@ -95,7 +92,6 @@ def create_operators_view_selector() -> dbc.Card:
         ),
         className="mb-3"
     )
-
 
 def create_datafields_view_selector() -> dbc.Card:
     """
@@ -119,7 +115,6 @@ def create_datafields_view_selector() -> dbc.Card:
         ),
         className="mb-3"
     )
-
 
 def create_operators_usage_summary(frequently_used, rarely_used, never_used, total_operators):
     """
@@ -191,7 +186,6 @@ def create_operators_usage_summary(frequently_used, rarely_used, never_used, tot
         ], active_item="frequent")
     ])
 
-
 def create_operators_statistics_panel(total_unique_ops, total_nominal, total_alphas):
     """
     Create operators statistics panel.
@@ -237,7 +231,6 @@ def create_operators_statistics_panel(total_unique_ops, total_nominal, total_alp
             ], className="mb-0")
         ], color="light")
     ])
-
 
 def create_datafields_grid_layout(chart_containers):
     """
@@ -302,7 +295,6 @@ def create_datafields_grid_layout(chart_containers):
         })
     ])
 
-
 def create_analysis_summary_items(results):
     """
     Create analysis summary list items.
@@ -361,7 +353,6 @@ def create_analysis_summary_items(results):
     ])
 
     return summary_items
-
 
 def create_no_analysis_data_message() -> html.Div:
     """

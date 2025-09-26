@@ -2,11 +2,10 @@
 Modal Interaction Callbacks
 
 Modal handling callbacks for chart clicks and detail displays.
-Extracted from visualization_server.py lines 4037-5178 with exact logic preservation.
 """
 
 import dash
-from dash import html, dcc, Input, Output, State, callback
+from dash import html, dcc, Input, Output, State, callback, MATCH, ALL
 import dash_bootstrap_components as dbc
 from dash.exceptions import PreventUpdate
 
@@ -14,17 +13,16 @@ from .base_callbacks import CallbackWrapper, preserve_prevent_update_logic
 from ..components import (
     create_operator_modal_content, create_datafield_modal_content,
     create_dataset_modal_content, create_category_modal_content,
-    create_neutralization_modal_content, create_error_modal_content
+    create_neutralization_modal_content, create_error_modal_content,
+    create_alpha_badge
 )
-from ..services import get_analysis_service
-
+from ..services import get_analysis_service, get_recommendation_service
 
 def register_modal_callbacks(app: dash.Dash):
     """
     Register all modal interaction callbacks.
 
     CRITICAL: These callbacks handle chart clicks and modal content generation.
-    Maintains exact compatibility with original visualization_server.py.
 
     Args:
         app: Dash application instance
@@ -46,7 +44,6 @@ def register_modal_callbacks(app: dash.Dash):
         """
         Handle operator chart clicks to show modal.
 
-        EXACT COPY from visualization_server.py lines 4037-4108
         """
         ctx = dash.callback_context
         if not ctx.triggered:
@@ -94,7 +91,6 @@ def register_modal_callbacks(app: dash.Dash):
         """
         Handle all operators chart clicks.
 
-        EXACT COPY from visualization_server.py lines 4109-4180
         """
         ctx = dash.callback_context
         if not ctx.triggered:
@@ -141,7 +137,6 @@ def register_modal_callbacks(app: dash.Dash):
         """
         Handle datafields chart clicks.
 
-        EXACT COPY from visualization_server.py lines 4181-4200
         """
         ctx = dash.callback_context
         if not ctx.triggered:
@@ -259,7 +254,6 @@ def register_modal_callbacks(app: dash.Dash):
         """
         Handle datasets chart clicks.
 
-        EXACT COPY from visualization_server.py lines 4221-4231
         """
         ctx = dash.callback_context
         if not ctx.triggered:
@@ -329,7 +323,6 @@ def register_modal_callbacks(app: dash.Dash):
         """
         Handle neutralization chart clicks.
 
-        EXACT COPY from visualization_server.py lines 4500-4528
         """
         ctx = dash.callback_context
         if not ctx.triggered:
@@ -384,6 +377,242 @@ def register_modal_callbacks(app: dash.Dash):
 
         raise PreventUpdate
 
+    @callback_wrapper.safe_callback(
+        [Output("datafield-detail-modal", "is_open", allow_duplicate=True),
+         Output("datafield-modal-title", "children", allow_duplicate=True),
+         Output("datafield-modal-body", "children", allow_duplicate=True)],
+        [Input({'type': 'datafield-used-badge', 'idx': ALL, 'region': ALL, 'datafield': ALL}, 'n_clicks')],
+        [State("datafield-detail-modal", "is_open")],
+        prevent_initial_call=True
+    )
+    @preserve_prevent_update_logic
+    def handle_datafield_used_badge_click(n_clicks_list, is_open):
+        """
+        Handle clicks on datafield-used-badge (green badges showing where datafield is used).
+        Shows alphas using the datafield in the clicked region.
+        """
+        ctx = dash.callback_context
+        if not ctx.triggered or not any(n_clicks_list):
+            raise PreventUpdate
+
+        # Get the triggered badge info
+        triggered_id = ctx.triggered[0]['prop_id']
+        badge_info = eval(triggered_id.split('.')[0])  # Extract the dictionary ID
+
+        datafield = badge_info['datafield']
+        region = badge_info['region']
+
+        try:
+            # Get alphas using this datafield in this region
+            rec_service = get_recommendation_service()
+            analysis_service = get_analysis_service()
+
+            # Get alphas for this datafield and region
+            alphas_in_region = rec_service.get_alphas_by_datafield_and_region(datafield, region)
+
+            # Create modal content
+            content = [
+                html.H5(f"📊 Datafield Usage in {region}", className="mb-3"),
+                dbc.ListGroup([
+                    dbc.ListGroupItem([
+                        html.Strong("Datafield: "),
+                        html.Code(datafield, className="bg-light p-1")
+                    ]),
+                    dbc.ListGroupItem([
+                        html.Strong("Region: "),
+                        html.Span(region, className="badge bg-success ms-2")
+                    ]),
+                    dbc.ListGroupItem([
+                        html.Strong("Total Alphas: "),
+                        html.Span(f"{len(alphas_in_region)}", className="badge bg-primary ms-2")
+                    ])
+                ], flush=True, className="mb-4"),
+
+                html.H6(f"🔗 Alphas Using This Datafield in {region}", className="mb-3"),
+            ]
+
+            if alphas_in_region:
+                alpha_badges = [
+                    create_alpha_badge(
+                        alpha_id=alpha_id,
+                        href=f"https://platform.worldquantbrain.com/alpha/{alpha_id}",
+                        color="success"
+                    ) for alpha_id in alphas_in_region[:100]  # Limit to 100 for performance
+                ]
+
+                content.append(
+                    html.Div(
+                        alpha_badges,
+                        className="mb-3",
+                        style={'max-height': '400px', 'overflow-y': 'auto'}
+                    )
+                )
+
+                if len(alphas_in_region) > 100:
+                    content.append(
+                        dbc.Alert(f"Showing first 100 of {len(alphas_in_region)} alphas", color="info")
+                    )
+            else:
+                content.append(
+                    dbc.Alert("No alpha data available.", color="warning")
+                )
+
+            return True, f"Datafield {datafield} in {region}", content
+
+        except Exception as e:
+            return True, "Error", create_error_modal_content(f"Error loading datafield details: {str(e)}")
+
+    @callback_wrapper.safe_callback(
+        [Output("datafield-detail-modal", "is_open", allow_duplicate=True),
+         Output("datafield-modal-title", "children", allow_duplicate=True),
+         Output("datafield-modal-body", "children", allow_duplicate=True)],
+        [Input({'type': 'datafield-region-badge', 'idx': ALL, 'region': ALL, 'datafield': ALL}, 'n_clicks')],
+        [State("datafield-detail-modal", "is_open"),
+         State("recommendations-content", "children")],
+        prevent_initial_call=True
+    )
+    @preserve_prevent_update_logic
+    def handle_datafield_region_badge_click(n_clicks_list, is_open, recommendations_content):
+        """
+        Handle clicks on datafield-region-badge (blue badges showing recommended regions).
+        Shows available datafield IDs in the target region.
+        """
+        ctx = dash.callback_context
+        if not ctx.triggered or not any(n_clicks_list):
+            raise PreventUpdate
+
+        # Get the triggered badge info
+        triggered_id = ctx.triggered[0]['prop_id']
+        badge_info = eval(triggered_id.split('.')[0])  # Extract the dictionary ID
+
+        datafield = badge_info['datafield']
+        target_region = badge_info['region']
+        idx = badge_info['idx']
+
+        try:
+            # Get the recommendation service and fetch fresh recommendations data
+            rec_service = get_recommendation_service()
+
+            # Get the full recommendations data to access availability_details
+            recommendations_data = rec_service.get_datafield_recommendations()
+            recommendations = recommendations_data.get('recommendations', [])
+
+            # Find the specific recommendation for this datafield
+            matching_rec = None
+            for rec in recommendations:
+                if rec['datafield_id'] == datafield:
+                    matching_rec = rec
+                    break
+
+            if not matching_rec:
+                # Fallback to the old method if recommendation not found
+                matching_datafields = rec_service.get_matching_datafields_in_region(datafield, target_region)
+            else:
+                # Use the availability_details from the recommendation
+                availability_details = matching_rec.get('availability_details', {})
+                matching_ids = availability_details.get(target_region, [])
+
+                # Get detailed info for each matching datafield
+                matching_datafields = []
+                if matching_ids:
+                    analysis_ops = rec_service._get_analysis_ops()
+                    db_engine = analysis_ops._get_db_engine()
+                    with db_engine.connect() as connection:
+                        from sqlalchemy import text
+                        # Build IN clause for datafield IDs
+                        placeholders = ', '.join([f':df_{i}' for i in range(len(matching_ids))])
+                        query = text(f"""
+                            SELECT DISTINCT datafield_id, data_description, dataset_id,
+                                   data_category, data_type, delay
+                            FROM datafields
+                            WHERE region = :region
+                            AND datafield_id IN ({placeholders})
+                        """)
+
+                        # Build parameters dict
+                        params = {'region': target_region}
+                        for i, df_id in enumerate(matching_ids):
+                            params[f'df_{i}'] = df_id
+
+                        result = connection.execute(query, params)
+                        for row in result:
+                            matching_datafields.append({
+                                'id': row.datafield_id,
+                                'description': row.data_description or 'No description',
+                                'dataset': row.dataset_id or 'Unknown',
+                                'category': row.data_category or 'Unknown',
+                                'data_type': row.data_type or 'Unknown',
+                                'delay': row.delay or 0
+                            })
+
+            # Create modal content
+            content = [
+                html.H5(f"📊 Datafield Availability in {target_region}", className="mb-3"),
+                dbc.ListGroup([
+                    dbc.ListGroupItem([
+                        html.Strong("Source Datafield: "),
+                        html.Code(datafield, className="bg-light p-1")
+                    ]),
+                    dbc.ListGroupItem([
+                        html.Strong("Target Region: "),
+                        html.Span(target_region, className="badge bg-primary ms-2")
+                    ]),
+                    dbc.ListGroupItem([
+                        html.Strong("Available Datafield IDs: "),
+                        html.Span(f"{len(matching_datafields)}", className="badge bg-info ms-2")
+                    ])
+                ], flush=True, className="mb-4"),
+            ]
+
+            if matching_datafields:
+                content.append(html.H6("🔍 Available Datafields", className="mb-3"))
+
+                # Create cards for each matching datafield
+                for i, df_info in enumerate(matching_datafields[:10], 1):  # Limit to 10 for display
+                    card = dbc.Card([
+                        dbc.CardHeader([
+                            html.H6([
+                                html.Span(f"Option {i}: ", className="text-muted"),
+                                html.Code(df_info.get('id', 'Unknown'), className="bg-light p-1")
+                            ], className="mb-0")
+                        ]),
+                        dbc.CardBody([
+                            dbc.Row([
+                                dbc.Col([
+                                    html.Strong("Dataset: "),
+                                    html.Span(df_info.get('dataset', 'Unknown'), className="badge bg-success ms-2")
+                                ], md=6),
+                                dbc.Col([
+                                    html.Strong("Category: "),
+                                    html.Span(df_info.get('category', 'Unknown'), className="badge bg-info ms-2")
+                                ], md=6)
+                            ], className="mb-2"),
+                            html.P(df_info.get('description', 'No description available'),
+                                  className="text-muted small mb-0")
+                        ])
+                    ], className="mb-3")
+                    content.append(card)
+
+                if len(matching_datafields) > 10:
+                    content.append(
+                        dbc.Alert(f"Showing first 10 of {len(matching_datafields)} available datafields", color="info")
+                    )
+
+                content.append(
+                    dbc.Alert([
+                        html.Strong("💡 Tip: "),
+                        f"You can use any of these datafields to create new alphas in {target_region}"
+                    ], color="light", className="mt-3")
+                )
+            else:
+                content.append(
+                    dbc.Alert(f"No matching datafields found in {target_region}", color="warning")
+                )
+
+            return True, f"Datafield Options for {target_region}", content
+
+        except Exception as e:
+            return True, "Error", create_error_modal_content(f"Error loading datafield options: {str(e)}")
 
 def register_close_modal_callbacks(app: dash.Dash):
     """Register modal close callbacks."""
@@ -400,7 +629,6 @@ def register_close_modal_callbacks(app: dash.Dash):
         """
         Close main detail modal.
 
-        EXACT COPY from visualization_server.py lines 4023-4027
         """
         if n_clicks:
             return False
@@ -417,12 +645,10 @@ def register_close_modal_callbacks(app: dash.Dash):
         """
         Close datafield detail modal.
 
-        EXACT COPY from visualization_server.py lines 5174-5178
         """
         if n_clicks:
             return False
         return dash.no_update
-
 
 # Export for easy registration
 __all__ = ['register_modal_callbacks', 'register_close_modal_callbacks']

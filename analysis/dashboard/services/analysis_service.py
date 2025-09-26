@@ -2,7 +2,6 @@
 Analysis Service
 
 Business logic for alpha analysis, operators, and datafields processing.
-Extracted from visualization_server.py with full backward compatibility.
 """
 
 import os
@@ -12,7 +11,6 @@ from sqlalchemy import text
 from .data_service import create_analysis_operations
 from ..utils import cached, safe_divide, sort_dict_by_values, group_small_categories
 from ..config import AVAILABLE_REGIONS
-
 
 class AnalysisService:
     """Service for handling analysis operations and data processing."""
@@ -386,10 +384,8 @@ class AnalysisService:
 
         return len(errors) == 0, errors
 
-
 # Global service instance
 _analysis_service_instance = None
-
 
 def get_analysis_service() -> AnalysisService:
     """Get singleton analysis service instance."""
@@ -397,7 +393,6 @@ def get_analysis_service() -> AnalysisService:
     if _analysis_service_instance is None:
         _analysis_service_instance = AnalysisService()
     return _analysis_service_instance
-
 
 def reset_analysis_service():
     """Reset analysis service instance (for testing)."""
