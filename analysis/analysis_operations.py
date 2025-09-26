@@ -386,16 +386,10 @@ class AnalysisOperations:
         Returns:
             Analysis results dictionary
         """
-        # Filter out excluded alphas from cache
-        # Handle the case where 'excluded' column might not exist or contain NaN values
-        if 'excluded' in cache_df.columns:
-            # Convert NaN to False (alphas without exclusion flag are included by default)
-            cache_df['excluded'] = cache_df['excluded'].fillna(False)
-            included_cache = cache_df[cache_df['excluded'] != True].copy()
-        else:
-            # If excluded column doesn't exist, all alphas are included
-            included_cache = cache_df.copy()
-        excluded_count = len(cache_df) - len(included_cache)
+        # Include ALL alphas regardless of tier restrictions
+        # Users can see alphas even if they contain operators/datafields not in their tier
+        included_cache = cache_df.copy()
+        excluded_count = 0  # We're not excluding any alphas now
         
         # Filter corresponding alphas_df to only include non-excluded
         included_alpha_ids = set(included_cache['alpha_id'].tolist())
@@ -548,8 +542,10 @@ class AnalysisOperations:
             db_engine = self._get_db_engine()
             with db_engine.connect() as connection:
                 # Query to get datafield usage by region
+                # Note: We intentionally don't filter by ac.excluded to show all alphas
+                # Users can see alphas even if they contain operators/datafields not in their tier
                 query = text("""
-                    SELECT 
+                    SELECT
                         r.region_name,
                         a.alpha_id,
                         a.universe,
@@ -559,7 +555,6 @@ class AnalysisOperations:
                     JOIN alphas a ON ac.alpha_id = a.alpha_id
                     JOIN regions r ON a.region_id = r.region_id
                     WHERE ac.datafields_unique IS NOT NULL
-                    AND ac.excluded = FALSE
                     AND a.alpha_type IN ('REGULAR', 'SUPER')
                 """)
                 
@@ -739,13 +734,11 @@ class AnalysisOperations:
                     JOIN regions r ON a.region_id = r.region_id
                     WHERE r.region_name = :region
                     AND ac.operators_unique ?| ARRAY[:operators]::text[]
-                    AND ac.excluded = FALSE
                     """
                     params['region'] = region
                 else:
                     query += """
                     WHERE ac.operators_unique ?| ARRAY[:operators]::text[]
-                    AND ac.excluded = FALSE
                     """
                 
                 result = connection.execute(text(query), params)
@@ -789,13 +782,11 @@ class AnalysisOperations:
                     JOIN regions r ON a.region_id = r.region_id
                     WHERE r.region_name = :region
                     AND ac.datafields_unique ?| ARRAY[:datafields]::text[]
-                    AND ac.excluded = FALSE
                     """
                     params['region'] = region
                 else:
                     query += """
                     WHERE ac.datafields_unique ?| ARRAY[:datafields]::text[]
-                    AND ac.excluded = FALSE
                     """
                 
                 result = connection.execute(text(query), params)
@@ -834,12 +825,10 @@ class AnalysisOperations:
                     JOIN alphas a ON ac.alpha_id = a.alpha_id
                     JOIN regions r ON a.region_id = r.region_id
                     WHERE r.region_name = :region
-                    AND ac.excluded = FALSE
                     """
                     params['region'] = region
                 else:
                     query += """
-                    WHERE ac.excluded = FALSE
                     """
                 
                 query += " ORDER BY operator"
@@ -880,12 +869,10 @@ class AnalysisOperations:
                     JOIN alphas a ON ac.alpha_id = a.alpha_id
                     JOIN regions r ON a.region_id = r.region_id
                     WHERE r.region_name = :region
-                    AND ac.excluded = FALSE
                     """
                     params['region'] = region
                 else:
                     query += """
-                    WHERE ac.excluded = FALSE
                     """
                 
                 query += " ORDER BY datafield"
