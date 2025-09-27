@@ -37,7 +37,8 @@ from database.operations_unsubmitted import (
     get_all_unsubmitted_alpha_ids_by_region,
     get_unsubmitted_pnl_data_for_alphas,
     update_multiple_unsubmitted_alpha_self_correlations,
-    get_unsubmitted_pnl_data_optimized  # Optimized bulk loading
+    get_unsubmitted_pnl_data_optimized,  # Optimized bulk loading
+    store_unsubmitted_correlations_to_table  # Store in correlation_unsubmitted table
 )
 from database.schema import get_connection, get_region_id
 from config.database_config import REGIONS
@@ -620,44 +621,51 @@ class CorrelationEngine:
                     return unsubmitted_alpha_id, None
                 
                 max_correlation = 0.0
+                best_correlated_submitted = None
                 correlations_found = 0
-                
+
                 for submitted_alpha_id in submitted_alpha_ids:
                     submitted_data = submitted_pnl_dict.get(submitted_alpha_id)
                     if not isinstance(submitted_data, dict) or 'df' not in submitted_data:
                         continue
-                    
+
                     submitted_df = submitted_data['df']
                     if submitted_df is None or submitted_df.empty:
                         continue
-                    
+
                     try:
                         # Find common dates
                         common_dates = unsubmitted_df.index.intersection(submitted_df.index)
                         if len(common_dates) < 20:
                             continue
-                        
+
                         # Extract PNL values
                         unsubmitted_pnl = unsubmitted_df.loc[common_dates, 'pnl'].values
                         submitted_pnl = submitted_df.loc[common_dates, 'pnl'].values
-                        
+
                         # Calculate correlation
                         corr = self.calculate_alpha_correlation_fast(unsubmitted_pnl, submitted_pnl)
                         if corr is not None:
                             abs_corr = abs(corr)
                             if abs_corr > max_correlation:
                                 max_correlation = abs_corr
+                                best_correlated_submitted = submitted_alpha_id
                             correlations_found += 1
                     
                     except Exception as e:
                         logger.debug(f"Error calculating correlation between {unsubmitted_alpha_id} and {submitted_alpha_id}: {e}")
                         continue
                 
-                result_corr = max_correlation if correlations_found > 0 else None
-                logger.debug(f"Unsubmitted alpha {unsubmitted_alpha_id}: max correlation = {result_corr} "
-                           f"(from {correlations_found} valid correlations)")
-                
-                return unsubmitted_alpha_id, result_corr
+                result = None
+                if correlations_found > 0:
+                    result = {
+                        'max_correlation': max_correlation,
+                        'best_correlated_submitted_alpha': best_correlated_submitted
+                    }
+                    logger.debug(f"Unsubmitted alpha {unsubmitted_alpha_id}: max correlation = {max_correlation} "
+                               f"with {best_correlated_submitted} (from {correlations_found} valid correlations)")
+
+                return unsubmitted_alpha_id, result
             
             # Use optimal worker count if not specified
             if max_workers is None:
@@ -676,10 +684,10 @@ class CorrelationEngine:
                 completed_count = 0
                 for future in concurrent.futures.as_completed(futures):
                     try:
-                        alpha_id, max_corr = future.result()
-                        if max_corr is not None:
-                            correlation_results[alpha_id] = max_corr
-                        
+                        alpha_id, result = future.result()
+                        if result is not None:
+                            correlation_results[alpha_id] = result
+
                         completed_count += 1
                         # More frequent progress updates for better monitoring
                         if completed_count % 25 == 0 or completed_count == len(unsubmitted_alpha_ids):
@@ -692,7 +700,12 @@ class CorrelationEngine:
             
             # Store results
             if correlation_results:
-                update_multiple_unsubmitted_alpha_self_correlations(correlation_results)
+                # Update self_correlation in alphas_unsubmitted table
+                update_multiple_unsubmitted_alpha_self_correlations(correlation_results, region)
+
+                # Also store in correlation_unsubmitted table with best correlated submitted alpha
+                store_unsubmitted_correlations_to_table(correlation_results, region)
+
                 logger.info(f"Successfully updated correlations for {len(correlation_results)} unsubmitted alphas")
             else:
                 logger.warning("No correlations calculated for unsubmitted alphas")
@@ -873,7 +886,10 @@ class CorrelationEngine:
                                 if corr is not None:
                                     abs_corr = abs(corr)
                                     if unsub_id not in batch_results or abs_corr > batch_results[unsub_id].get('max_correlation', 0):
-                                        batch_results[unsub_id] = {'max_correlation': abs_corr}
+                                        batch_results[unsub_id] = {
+                                            'max_correlation': abs_corr,
+                                            'best_correlated_submitted_alpha': sub_id
+                                        }
 
                                 completed_in_batch += 1
                                 total_processed += 1
@@ -904,7 +920,10 @@ class CorrelationEngine:
                                 if corr is not None:
                                     abs_corr = abs(corr)
                                     if unsub_id not in batch_results or abs_corr > batch_results[unsub_id].get('max_correlation', 0):
-                                        batch_results[unsub_id] = {'max_correlation': abs_corr}
+                                        batch_results[unsub_id] = {
+                                            'max_correlation': abs_corr,
+                                            'best_correlated_submitted_alpha': sub_id
+                                        }
 
                                 completed_in_batch += 1
                                 total_processed += 1
@@ -930,7 +949,12 @@ class CorrelationEngine:
 
             # Store all results
             if all_correlation_results:
+                # Update self_correlation in alphas_unsubmitted table
                 update_multiple_unsubmitted_alpha_self_correlations(all_correlation_results, region)
+
+                # Also store in correlation_unsubmitted table with best correlated submitted alpha
+                store_unsubmitted_correlations_to_table(all_correlation_results, region)
+
                 logger.info(f"Successfully updated correlations for {len(all_correlation_results)} unsubmitted alphas")
             else:
                 logger.warning("No correlations calculated for unsubmitted alphas")

@@ -498,6 +498,75 @@ def update_multiple_unsubmitted_alpha_self_correlations(correlation_results: Dic
         logger.error(f"Error updating multiple self_correlations for region {region}: {e}")
         raise
 
+def store_unsubmitted_correlations_to_table(correlation_results: Dict[str, Dict[str, Any]], region: str) -> None:
+    """
+    Store correlation results in the correlation_unsubmitted_{region} table.
+    This includes both max correlation and the best correlated submitted alpha.
+
+    Args:
+        correlation_results: Dictionary mapping alpha IDs to correlation results
+                           with 'max_correlation' and 'best_correlated_submitted_alpha'
+        region: Region name
+    """
+    if not correlation_results:
+        logger.info("No correlation results to store in correlation_unsubmitted table")
+        return
+
+    try:
+        db_engine = get_connection()
+        with db_engine.connect() as connection:
+            with connection.begin():
+                table_name = f'correlation_unsubmitted_{region.lower()}'
+
+                # Prepare data for insertion
+                values_to_insert = []
+                for alpha_id, result in correlation_results.items():
+                    max_corr = result.get('max_correlation')
+                    best_alpha = result.get('best_correlated_submitted_alpha')
+
+                    if max_corr is not None:
+                        values_to_insert.append({
+                            'alpha_id': alpha_id,
+                            'max_correlation_with_submitted': float(max_corr),
+                            'best_correlated_submitted_alpha': best_alpha
+                        })
+
+                if not values_to_insert:
+                    logger.info("No valid correlation data to insert")
+                    return
+
+                # Clear existing correlations for these alphas
+                alpha_ids_to_update = [v['alpha_id'] for v in values_to_insert]
+                delete_query = text(f"""
+                    DELETE FROM {table_name}
+                    WHERE alpha_id = ANY(:alpha_ids)
+                """)
+                connection.execute(delete_query, {'alpha_ids': alpha_ids_to_update})
+
+                # Insert new correlations
+                for value_dict in values_to_insert:
+                    insert_query = text(f"""
+                        INSERT INTO {table_name}
+                        (alpha_id, max_correlation_with_submitted, best_correlated_submitted_alpha, last_updated)
+                        VALUES (:alpha_id, :max_corr, :best_alpha, CURRENT_TIMESTAMP)
+                        ON CONFLICT (alpha_id) DO UPDATE SET
+                            max_correlation_with_submitted = EXCLUDED.max_correlation_with_submitted,
+                            best_correlated_submitted_alpha = EXCLUDED.best_correlated_submitted_alpha,
+                            last_updated = EXCLUDED.last_updated
+                    """)
+
+                    connection.execute(insert_query, {
+                        'alpha_id': value_dict['alpha_id'],
+                        'max_corr': value_dict['max_correlation_with_submitted'],
+                        'best_alpha': value_dict['best_correlated_submitted_alpha']
+                    })
+
+                logger.info(f"Successfully stored {len(values_to_insert)} correlations in {table_name}")
+
+    except Exception as e:
+        logger.error(f"Error storing correlations in correlation_unsubmitted table for region {region}: {e}")
+        raise
+
 # Optimized bulk loading functions
 def get_unsubmitted_pnl_data_bulk(alpha_ids: List[str], region: str) -> Dict[str, pd.DataFrame]:
     """

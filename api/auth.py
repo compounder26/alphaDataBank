@@ -99,29 +99,41 @@ def check_session_valid(session: requests.Session, retry_on_204: bool = False) -
 def get_authenticated_session(session: Optional[requests.Session] = None) -> Optional[requests.Session]:
     """
     Get an authenticated session for the WorldQuant Brain API.
-    
+
     Args:
         session: Optional pre-configured session object. If provided, this session will be authenticated.
                  If None, a new session will be created.
-    
+
     Returns:
         An authenticated requests.Session object or None if authentication fails.
     """
     # Use local authentication functions (moved from legacy)
-    
+
     # Use the provided session if available, otherwise create a new one
     if session is None:
         session = start_session()
     else:
         # If a session is provided, authenticate it
         session = authenticate_existing_session(session)
-    
+
+    # Only proceed if we got a valid session from authentication
+    if session is None:
+        logger.error("Failed to create or authenticate session")
+        return None
+
     # Check with retry logic for 204 responses (single phase)
     if check_session_valid(session, retry_on_204=True):
         logger.info("Successfully authenticated with WorldQuant Brain API")
         return session
     else:
         logger.error("Failed to authenticate with WorldQuant Brain API after retries")
+        # Clear invalid cookies if they exist
+        try:
+            if Path(COOKIE_FILE_PATH).exists():
+                os.remove(COOKIE_FILE_PATH)
+                logger.info("Cleared invalid cookie file")
+        except Exception as e:
+            logger.warning(f"Could not remove cookie file: {e}")
         return None
 
 
@@ -386,7 +398,16 @@ def authenticate_existing_session(s):
         print("Reusing existing session...")
         return s
 
-    # If the session is not valid, proceed with new authentication
+    # If cookies exist but are invalid, clear them
+    if Path(COOKIE_FILE_PATH).exists():
+        print("Existing cookies are invalid, clearing...")
+        s.cookies.clear()
+        try:
+            os.remove(COOKIE_FILE_PATH)
+        except Exception as e:
+            print(f"Warning: Could not remove invalid cookie file: {e}")
+
+    # Proceed with new authentication
     s.auth = get_credentials()
     r = s.post(brain_api_url + "/authentication")
 
@@ -425,8 +446,8 @@ def authenticate_existing_session(s):
 
             # If we get here, token didn't become available in time
             print(f"Warning: Token not available after {max_wait} seconds.")
-            print("Saving cookies anyway - try running the command again.")
-            save_cookies(s)
+            print("Authentication may not be complete. Please try running the command again.")
+            # Don't save invalid cookies
             return s
 
         else:
@@ -436,9 +457,23 @@ def authenticate_existing_session(s):
             s.auth = get_credentials()
             return authenticate_existing_session(s)
 
-    # For non-biometric auth (or if no auth needed), just save cookies and return
-    save_cookies(s)
-    return s
+    # For successful authentication (status 200 or other success codes)
+    # Verify the session is actually valid before saving cookies
+    if r.status_code == 200:
+        # Check if authentication actually succeeded
+        timeout_remaining = check_session_timeout(s)
+        if timeout_remaining > 0:
+            print("Authentication successful, saving cookies...")
+            save_cookies(s)
+            return s
+        else:
+            print("Warning: Authentication response was 200 but session is not valid")
+            print("Please try again or check your credentials.")
+            return s
+    else:
+        print(f"Unexpected authentication response: {r.status_code}")
+        print(f"Response: {r.text[:200]}..." if r.text else "No response text")
+        return s
 
 
 def start_session():

@@ -11,7 +11,7 @@ import math
 from dash import html, dcc
 import dash_bootstrap_components as dbc
 
-from ..config import TEMPLATE
+from ..config import TEMPLATE, CHART_DIMENSIONS
 from ..services import create_analysis_operations, get_analysis_service
 
 def create_datafields_content(analysis_data, view_mode='top20'):
@@ -240,7 +240,7 @@ def create_top20_datafields_content(analysis_data):
                 ]),
             ], flush=True, className="mb-3"),
 
-            dcc.Graph(id='category-chart', figure=fig2, style={'height': '300px'}),
+            dcc.Graph(id='category-chart', figure=fig2, style={'height': f'{CHART_DIMENSIONS["category_pie_chart_height"]}px'}),
         ], width=6),
 
         # Dataset treemap (full width)
@@ -388,83 +388,6 @@ def create_dataset_treemap_content(analysis_data):
 
     return dcc.Graph(id='dataset-treemap-main', figure=fig, style={'height': '750px'})
 
-def create_top20_datafields_content(analysis_data):
-    """
-    Create the original top 20 datafields view with grid layout.
-    """
-    datafields_data = analysis_data.get('datafields', {})
-    top_datafields = datafields_data.get('top_datafields', [])
-    metadata = analysis_data.get('metadata', {})
-
-    # Create DataFrame for datafields chart
-    df1 = pd.DataFrame({
-        'datafield': [df for df, _ in top_datafields[:20]],
-        'count': [count for _, count in top_datafields[:20]]
-    })
-
-    # Create interactive bar chart for top datafields
-    fig1 = px.bar(
-        df1,
-        x='count',
-        y='datafield',
-        orientation='h',
-        title="Top 20 Most Used Datafields (Click bars for details)",
-        labels={'count': 'Number of Alphas Using', 'datafield': 'Datafield'},
-        template=TEMPLATE
-    )
-    fig1.update_layout(height=500, clickmode='event+select')
-    fig1.update_traces(
-        hovertemplate='<b>%{y}</b><br>Used in %{x} alphas<br>Click for details<extra></extra>',
-        marker_color='darkgreen'
-    )
-
-    # Calculate category and dataset counts for additional charts
-    category_counts, dataset_counts = _calculate_category_and_dataset_counts(datafields_data)
-
-    # Create category pie chart
-    fig2 = _create_category_pie_chart(category_counts)
-
-    # Create dataset treemap
-    fig3 = _create_dataset_treemap(dataset_counts)
-
-    # Calculate statistics
-    total_unique_dfs = len(datafields_data.get('unique_usage', {}))
-    total_nominal = sum(datafields_data.get('nominal_usage', {}).values())
-    total_alphas = metadata.get('total_alphas', 0)
-    avg_dfs_per_alpha = total_nominal / total_alphas if total_alphas > 0 else 0
-
-    return dbc.Row([
-        # Main datafields chart
-        dbc.Col([
-            dcc.Graph(id='datafields-chart', figure=fig1)
-        ], width=6),
-
-        # Statistics panel
-        dbc.Col([
-            html.H6("📈 Usage Statistics", className="mb-2"),
-            dbc.ListGroup([
-                dbc.ListGroupItem([
-                    html.Strong("Total Unique Datafields: "),
-                    html.Span(f"{total_unique_dfs}", className="badge bg-primary ms-2")
-                ]),
-                dbc.ListGroupItem([
-                    html.Strong("Average per Alpha: "),
-                    html.Span(f"{avg_dfs_per_alpha:.1f}", className="badge bg-info ms-2")
-                ]),
-                dbc.ListGroupItem([
-                    html.Strong("Dataset Categories: "),
-                    html.Span(f"{len(category_counts)}", className="badge bg-warning ms-2")
-                ]),
-            ], flush=True, className="mb-3"),
-
-            dcc.Graph(id='category-chart', figure=fig2, style={'height': '300px'})
-        ], width=6),
-
-        # Dataset treemap
-        dbc.Col([
-            dcc.Graph(id='dataset-treemap', figure=fig3, style={'height': '400px'})
-        ], width=12)
-    ])
 
 def _calculate_category_and_dataset_counts(datafields_data):
     """Calculate category and dataset counts for charts."""
@@ -528,7 +451,7 @@ def _create_category_pie_chart(category_counts):
             template=TEMPLATE
         )
         fig2.update_layout(
-            height=350,
+            # Remove height from here - let the inline style control it
             font=dict(size=12),
             showlegend=True,
             legend=dict(
@@ -550,7 +473,7 @@ def _create_category_pie_chart(category_counts):
         fig2 = go.Figure()
         fig2.update_layout(
             title="No Category Data Available",
-            height=300,
+            # Remove height from here as well
             annotations=[dict(text="No data to display", x=0.5, y=0.5, showarrow=False)]
         )
 

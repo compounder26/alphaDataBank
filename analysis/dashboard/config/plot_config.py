@@ -16,7 +16,8 @@ CHART_DIMENSIONS = {
     'modal_chart_height': '300px',
     'treemap_height': '750px',
     'operators_chart_height': 600,
-    'datafields_chart_height': 500
+    'datafields_chart_height': 500,
+    'category_pie_chart_height': 300
 }
 
 # Color schemes
